@@ -1,0 +1,1 @@
+/home/river/Desktop/Projects/$ugar/sugar/target/debug/sugar: /home/river/Desktop/Projects/$ugar/sugar/src/lexer.rs /home/river/Desktop/Projects/$ugar/sugar/src/main.rs /home/river/Desktop/Projects/$ugar/sugar/src/string_utils.rs /home/river/Desktop/Projects/$ugar/sugar/src/token.rs
