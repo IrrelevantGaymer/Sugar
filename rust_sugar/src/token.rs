@@ -1,10 +1,28 @@
 
 pub type Tkn<'t> = Token<'t>;
+#[derive(Clone)]
 pub struct Token<'t> {
-    token: TokenType<'t>
+    token: TokenType<'t>,
+    file_name: String,
+    line_index: usize,
+    line_number: usize
+}
+
+impl<'t> Token<'t> {
+    pub fn new (
+        token: TknType, file_name: String, line_index: usize, line_number: usize
+    ) -> Token {
+        return Token{
+            token, 
+            file_name, 
+            line_index, 
+            line_number
+        };
+    }
 }
 
 pub type TknType<'t> = TokenType<'t>;
+#[derive(Clone)]
 pub enum TokenType<'t> {
     Keyword(Keyword),
     Type(Type),
@@ -40,6 +58,7 @@ pub enum TokenType<'t> {
 }
 
 pub type Kwrd = Keyword;
+#[derive(Clone)]
 pub enum Keyword {
     Let,
 
@@ -63,6 +82,7 @@ pub enum Keyword {
 }
 
 pub type Op = Operator;
+#[derive(Clone)]
 pub enum Operator {
     BangRangeEquals, // !..=
     BangRange, // !..
@@ -119,9 +139,11 @@ pub enum Operator {
     Insert, // ->
 }
 
+#[derive(Clone)]
 pub enum Type {
     Integer(u8),
     UnsignedInteger(u8),
+    Float(u8),
 
     Character,
     Boolean,
