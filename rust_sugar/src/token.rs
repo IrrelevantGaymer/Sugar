@@ -1,6 +1,7 @@
+use std::fmt::Display;
 
 pub type Tkn<'t> = Token<'t>;
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Token<'t> {
     token: TokenType<'t>,
     file_name: String,
@@ -21,19 +22,28 @@ impl<'t> Token<'t> {
     }
 }
 
+impl<'t> Display for Token<'t> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} token in file {} on line {} index {}", 
+            self.token, self.file_name, self.line_number, self.line_index
+        )
+    }
+}
+
 pub type TknType<'t> = TokenType<'t>;
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum TokenType<'t> {
     Keyword(Keyword),
     Type(Type),
     Identifier(String),
-    Operator(Operator),
+    Operation(Operator),
 
     IntegerLiteral(i128),
     FloatLiteral(f64),
     CharLiteral(char),
     StringLiteral(String),
 
+    Semicolon,
     NewLine,
     Spaces(usize),
 
@@ -48,6 +58,8 @@ pub enum TokenType<'t> {
     OpenAngularBracket,
     CloseAngularBracket,
 
+    ColonColon,
+    Colon,
     Dot,
     Borrow,
 
@@ -57,8 +69,14 @@ pub enum TokenType<'t> {
     Invalid,
 }
 
+impl<'t> Display for TokenType<'t> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 pub type Kwrd = Keyword;
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Keyword {
     Let,
 
@@ -82,7 +100,7 @@ pub enum Keyword {
 }
 
 pub type Op = Operator;
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Operator {
     BangRangeEquals, // !..=
     BangRange, // !..
@@ -139,7 +157,7 @@ pub enum Operator {
     Insert, // ->
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Type {
     Integer(u8),
     UnsignedInteger(u8),

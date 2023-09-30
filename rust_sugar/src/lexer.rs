@@ -1,7 +1,17 @@
 use crate::string_utils::StringUtils;
 use crate::token::{Kwrd, Op, Type, Tkn, TknType};
 
+const SINGLE_TOKEN_CHARACTERS: &str = "(){}[];?.";
 const OPERATOR_CHARACTERS: &str = "+-*/%&|^=!~:<>";
+const OPERATORS: &[&str] = &[
+    "!..=", "!..", "..=", "..",
+    "++=", "+=", "-=", "**=", "*=", "//=", "/=", "%=",
+    "&&=", "||=", "^^=", "=!", "&=", "|=", "^=", "=~", "<<=", ">>=",
+    "==", "!=", "<=", ">=", "=", "->",
+    "++", "+", "--", "-", "**", "*", "//", "/", "%",
+    "&&", "||", "^^", "!", "&", "|", "^", "~", "<<", ">>",
+    "<", ">",
+];
 
 pub struct Lexer<'a> {
     file_name: &'a str,
@@ -16,6 +26,16 @@ impl<'a> Lexer<'a> {
         self.peek += num;
     }
     
+    pub fn new (file: &'a str, src: &'a str) -> Lexer<'a> {
+        return Lexer {
+            file_name: file,
+            source_code: src,
+            peek: 0,
+            line_index: 1,
+            line_number: 1
+        };
+    }
+
     pub fn set_file(&mut self, file: &'a str) {
         self.file_name = file;
     }
@@ -36,6 +56,7 @@ impl<'a> Lexer<'a> {
             let index = self.line_index;
             let line = self.line_number;
 
+            println!("char: \'{}\'", chr);
             match chr {
                 '?' => {
                     token = TknType::Question;
@@ -45,6 +66,25 @@ impl<'a> Lexer<'a> {
                 },
                 '$' => {
                     token = TknType::Dollar;
+                    new_line = false;
+                    self.line_index += 1;
+                    self.consume(1);
+                }
+                ':' => {
+                    if let Some(':') = self.source_code.chars().nth(self.peek + 1) {
+                        token = TknType::ColonColon;
+                        new_line = false;
+                        self.line_index += 2;
+                        self.consume(2);
+                    } else {
+                        token = TknType::Colon;
+                        new_line = false;
+                        self.line_index += 1;
+                        self.consume(1);
+                    }
+                },
+                ';' => {
+                    token = TknType::Semicolon;
                     new_line = false;
                     self.line_index += 1;
                     self.consume(1);
@@ -86,11 +126,16 @@ impl<'a> Lexer<'a> {
                     self.consume(1);
                 },
                 '\n' | '\r' => {
-                    token = TknType::NewLine;
-                    new_line = true;
                     self.line_index = 1;
                     self.line_number += 1;
                     self.consume(1);
+                    
+                    if !new_line {
+                        continue;
+                    }
+                    
+                    token = TknType::NewLine;
+                    new_line = true;
                 },
                 ' ' => {
                     let spaces = self.count_spaces();
@@ -105,14 +150,29 @@ impl<'a> Lexer<'a> {
                     }
                 },
                 _ => {
-                    token = self.get_multi_character_token().clone();
+                    token = self.get_multi_character_token();
+                    new_line = false;
                 }
             }
 
-            //tokens.push(Tkn::new(token, self.file_name.to_string(), index, line));
+            tokens.push(Tkn::new(
+                token, 
+                self.file_name.to_string(), 
+                index, 
+                line
+            ));
+
+            println!("token: \n\t{}\npeek: {}", tokens[tokens.len() - 1], self.peek);
         }
 
-        todo!();
+        tokens.push(Tkn::new(
+            TknType::EndOfFile, 
+            self.file_name.to_string(), 
+            self.line_index, 
+            self.line_number
+        ));
+
+        return tokens;
     }
 
     fn count_spaces(&mut self) -> usize {
@@ -133,13 +193,14 @@ impl<'a> Lexer<'a> {
         let mut end_index: usize = self.peek;
 
         while let Some(chr) = self.source_code.chars().nth(end_index) {
-            if !is_invalid_character(chr) {
+            if is_invalid_character(chr) {
                 break;
             }
             end_index += 1;
         }
 
-        multi_character = self.source_code.slice(start_index..=end_index);
+        multi_character = self.source_code.slice(start_index..end_index);
+        println!("multi_character: \"{}\"", multi_character);
         match multi_character {
             "let" => {
                 self.consume(3);
@@ -202,11 +263,11 @@ impl<'a> Lexer<'a> {
                 return TknType::Keyword(Kwrd::Package);
             },  
             _ => {
-                return self.get_integer_literal(multi_character)
+                return self.get_operation()
+                    .or_else(|| self.get_integer_literal(multi_character))
                     .or_else(|| self.get_float_literal(multi_character))
                     .or_else(|| self.get_char_literal(multi_character))
                     .or_else(|| self.get_string_literal(multi_character))
-                    .or_else(|| self.get_operation(multi_character))
                     .or_else(|| self.get_type(multi_character))
                     .or_else(|| self.get_identifier(multi_character))
                     .unwrap_or_else(|| self.get_invalid(multi_character));
@@ -214,25 +275,102 @@ impl<'a> Lexer<'a> {
         };
     }
 
+    fn get_operation(&mut self) -> Option<TknType<'a>> {
+        if let Some(chr) = self.source_code.chars().nth(self.peek) {
+            if !OPERATOR_CHARACTERS.contains(chr) {
+                return None;
+            }
+        } else {
+            return None;
+        }
+        
+        for i in 0..OPERATORS.len() {
+            if self.source_code.len() - self.peek < OPERATORS[i].len() {
+                continue;
+            }
+            
+            let operator = self.source_code.slice(self.peek..self.peek + OPERATORS[i].len());
+            println!("token: \"{}\", operator: \"{}\"", operator, OPERATORS[i]);
+            if operator == OPERATORS[i] {
+                self.consume(   OPERATORS[i].len());
+                return match operator {
+                    "!..=" => Some(TknType::Operation(Op::BangRangeEquals)), 
+                    "!.." => Some(TknType::Operation(Op::BangRange)), 
+                    "..=" => Some(TknType::Operation(Op::RangeEquals)), 
+                    ".." => Some(TknType::Operation(Op::Range)), 
+                    "==" => Some(TknType::Operation(Op::Equals)), 
+                    "!=" => Some(TknType::Operation(Op::NotEquals)), 
+                    "<=" => Some(TknType::Operation(Op::LessThanEqualTo)),
+                    ">=" => Some(TknType::Operation(Op::GreaterThanEqualTo)), 
+                    "<" => Some(TknType::Either(
+                      &TknType::Operation(Op::LessThan),
+                      &TknType::OpenAngularBracket
+                    )), 
+                    ">" => Some(TknType::Either(
+                      &TknType::Operation(Op::GreaterThan),
+                      &TknType::CloseAngularBracket
+                    )), 
+                    "++=" => Some(TknType::Operation(Op::ConcatEquals)), 
+                    "+=" => Some(TknType::Operation(Op::PlusEquals)),
+                    "-=" => Some(TknType::Operation(Op::MinusEquals)), 
+                    "**=" => Some(TknType::Operation(Op::ExponentEquals)), 
+                    "*=" => Some(TknType::Operation(Op::MultiplyEquals)), 
+                    "//=" => Some(TknType::Operation(Op::FloatDivideEquals)), 
+                    "/=" => Some(TknType::Operation(Op::IntDivideEquals)), 
+                    "&&=" => Some(TknType::Operation(Op::LogicAndEquals)), 
+                    "&=" => Some(TknType::Operation(Op::BitwiseAndEquals)), 
+                    "||=" => Some(TknType::Operation(Op::LogicOrEquals)), 
+                    "|=" => Some(TknType::Operation(Op::BitwiseOrEquals)), 
+                    "^^=" => Some(TknType::Operation(Op::LogicXorEquals)), 
+                    "^=" => Some(TknType::Operation(Op::BitwiseXorEquals)), 
+                    "=!" => Some(TknType::Operation(Op::EqualsNot)), 
+                    "=~" => Some(TknType::Operation(Op::EqualsNegate)), 
+                    "++" => Some(TknType::Operation(Op::PlusPlus)), 
+                    "--" => Some(TknType::Operation(Op::MinusMinus)), 
+                    "+" => Some(TknType::Operation(Op::Plus)), 
+                    "-" => Some(TknType::Operation(Op::Minus)), 
+                    "**" => Some(TknType::Operation(Op::Exponent)), 
+                    "*" => Some(TknType::Operation(Op::Multiply)), 
+                    "//" => Some(TknType::Operation(Op::Equals)), 
+                    "/" => Some(TknType::Operation(Op::Equals)), 
+                    "&&" => Some(TknType::Operation(Op::Equals)), 
+                    "||" => Some(TknType::Operation(Op::Equals)), 
+                    "^^" => Some(TknType::Operation(Op::Equals)),
+                    "&" => Some(TknType::Operation(Op::Equals)), 
+                    "|" => Some(TknType::Operation(Op::Equals)), 
+                    "^" => Some(TknType::Operation(Op::Equals)), 
+                    "=" => Some(TknType::Operation(Op::Equals)),
+                    "->" => Some(TknType::Operation(Op::Equals)),
+                    _ => unreachable!()
+                }
+            }
+        }
+        
+        return None;
+    }
+
     fn get_integer_literal(&mut self, multi_character: &str) -> Option<TknType<'a>> {
-        todo!();
+        match multi_character.parse() {
+            Ok(int) => {
+                self.consume(multi_character.len());
+                return Some(TknType::IntegerLiteral(int));
+            },
+            Err(_) => return None
+        }
     }
 
     fn get_float_literal(&mut self, multi_character: &str) -> Option<TknType<'a>> {
-        todo!();
+        return None;
     }
 
     fn get_char_literal(&mut self, multi_character: &str) -> Option<TknType<'a>> {
-        todo!();
+        return None;
     }
 
     fn get_string_literal(&mut self, multi_character: &str) -> Option<TknType<'a>> {
-        todo!();
+        return None;
     }
 
-    fn get_operation(&mut self, multi_character: &str) -> Option<TknType<'a>> {
-        todo!();
-    }
 
     fn get_type(&mut self, multi_character: &str) -> Option<TknType<'a>> {
         match multi_character.chars().nth(0) {
@@ -266,7 +404,11 @@ impl<'a> Lexer<'a> {
     fn get_identifier(&mut self, multi_character: &str) -> Option<TknType<'a>> {
         let mut break_index: usize = 0;
 
-        if multi_character.chars().nth(0).unwrap().is_numeric() {
+        if let Some(chr) = multi_character.chars().nth(0) {
+            if chr.is_numeric() {
+                return None;
+            }
+        } else {
             return None;
         }
 
@@ -277,10 +419,10 @@ impl<'a> Lexer<'a> {
             break_index += 1;
         }
         
-        let multi_character = multi_character.slice(0..=break_index);
+        let multi_character = multi_character.slice(0..break_index);
         self.consume(break_index);
 
-        return Some(TknType::Identifier(String::from(multi_character)));
+        return Some(TknType::Identifier(multi_character.to_string()));
     }
 
     fn get_invalid(&mut self, multi_character: &str) -> TknType<'a> {
@@ -290,5 +432,9 @@ impl<'a> Lexer<'a> {
 }
 
 fn is_invalid_character(chr: char) -> bool {
-    return chr == ' ' || chr == '\n' || chr == '\r' || OPERATOR_CHARACTERS.contains(chr);
+    return chr == ' ' 
+        || chr == '\n' 
+        || chr == '\r' 
+        || SINGLE_TOKEN_CHARACTERS.contains(chr)
+        || OPERATOR_CHARACTERS.contains(chr);
 }
