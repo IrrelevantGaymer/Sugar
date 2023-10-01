@@ -1,10 +1,5 @@
 pub fn Main {
-    i32 x = 3;
-    i32 y = 5;
-
-    std::writeln x Add y;
-}
-
-pub fn Add $ i32 a $ infix $ i32 b : i32 {
-    return a + b;
+    let str = "Hello World";
+    i32 x y = 3;
+    std::writeln x + y;
 }

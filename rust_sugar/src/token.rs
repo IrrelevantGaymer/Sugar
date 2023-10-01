@@ -84,12 +84,16 @@ pub enum Keyword {
     Mutable,
     Oxidize,
     Unsafe,
-
+    
     Function,
     Accessor,
     Whitelist,
     Blacklist,
     Struct,
+    
+    Prefix,
+    Infix,
+    Postfix,
 
     Namespace,
     Alias,
