@@ -1,31 +1,31 @@
 
-type Stmt<'s> = Statement<'s>;
+pub type Stmt<'s> = Statement<'s>;
 
 #[derive(Clone, Debug)]
 pub enum Statement<'s> {
-    Compound(&'s [Stmt<'s>]),
+    Compound(Vec<Stmt<'s>>),
     While(Expr<'s>, &'s Stmt<'s>),
-    Conditional(&'s [Expr<'s>], &'s [Stmt<'s>]),
+    Conditional(Vec<Expr<'s>>, Vec<Stmt<'s>>),
     Return(Expr<'s>),
-    Function(Fn<'s>),
+    Declare(Option<String>, String),
     Assign(Expr<'s>, Expr<'s>),
     Insert(Expr<'s>, Expr<'s>),
 }
 
-type Expr<'e> = Expression<'e>;
+pub type Expr<'e> = Expression<'e>;
 
 #[derive(Clone, Debug)]
 pub enum Expression<'e> {
     Identifier(String),
     Literal(Lit),
     Conditional(&'e Expr<'e>, &'e Expr<'e>, &'e Expr<'e>),
-    Functional(String, &'e [Expr<'e>]),
+    Functional(String, Vec<Expr<'e>>),
     BinaryOp(Op, &'e Expr<'e>, &'e Expr<'e>),
     UnaryOp(Op, &'e Expr<'e>)
 
 }
 
-type Lit = Literal;
+pub type Lit = Literal;
 
 #[derive(Clone, Debug)]
 pub enum Literal {
@@ -71,17 +71,19 @@ pub enum Operator {
     BitwiseShiftRight, // >>
 }
 
-type Fn<'f> = Function<'f>;
+pub type Fn<'f> = Function<'f>;
 #[derive(Clone, Debug)]
 pub struct Function<'f> {
-    mutable: bool,
-    recursive: bool,
-    name: String,
-    arguments: &'f [FnParam<'f>],
-    body: &'f Stmt<'f>
+    pub location: String,
+    pub accessibility: String,
+    pub mutable: bool,
+    pub recursive: bool,
+    pub name: String,
+    pub arguments: &'f [FnParam<'f>],
+    pub body: Stmt<'f>
 }
 
-type FnParam<'fp> = FunctionParamater<'fp>;
+pub type FnParam<'fp> = FunctionParamater<'fp>;
 #[derive(Clone, Debug)]
 pub struct FunctionParamater<'fp> {
     param_type: String,

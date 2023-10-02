@@ -22,9 +22,6 @@ pub struct Lexer<'l> {
 }
 
 impl<'l> Lexer<'l> {
-    fn consume(&mut self, num: usize) {
-        self.index += num;
-    }
     
     pub fn new (file: &'l str, src: &'l str) -> Lexer<'l> {
         return Lexer {
@@ -39,7 +36,7 @@ impl<'l> Lexer<'l> {
     pub fn set_file(&mut self, file: &'l str) {
         self.file_name = file;
     }
-
+    
     pub fn set_source_code(&mut self, src: &'l str) {
         self.source_code = src;
         self.index = 0;
@@ -47,15 +44,19 @@ impl<'l> Lexer<'l> {
         self.line_number = 1;
     }
 
-    pub fn peek(&self) -> Option<char> {
+    fn consume(&mut self, num: usize) {
+        self.index += num;
+    }
+    
+    fn peek(&self) -> Option<char> {
         return self.source_code.chars().nth(self.index);
     }
-
-    pub fn peek_at(&self, index: usize) -> Option<char> {
+    
+    fn peek_at(&self, index: usize) -> Option<char> {
         return self.source_code.chars().nth(index);
     }
 
-    pub fn peek_after(&self, after: usize) -> Option<char> {
+    fn peek_after(&self, after: usize) -> Option<char> {
         return self.source_code.chars().nth(self.index + after);
     }
     
@@ -63,7 +64,7 @@ impl<'l> Lexer<'l> {
         let mut tokens: Vec<Tkn> = Vec::new();
         let mut new_line: bool = true;
 
-        while let Some(chr) = self.source_code.chars().nth(self.index) {
+        while let Some(chr) = self.peek() {
             let token: TknType;
             let index = self.line_index;
             let line = self.line_number;
@@ -151,7 +152,7 @@ impl<'l> Lexer<'l> {
                     self.line_index += 1;
                 },
                 ':' => {
-                    if let Some(':') = self.source_code.chars().nth(self.index + 1) {
+                    if let Some(':') = self.peek_after(1) {
                         token = TknType::ColonColon;
                         new_line = false;
                         self.consume(2);
@@ -257,7 +258,7 @@ impl<'l> Lexer<'l> {
         let mut spaces: usize = 0;
         let mut index: usize = self.index;
 
-        while let Some(' ') = self.source_code.chars().nth(index) {
+        while let Some(' ') = self.peek_at(index) {
             spaces += 1;
             index += 1;
         }
@@ -270,7 +271,7 @@ impl<'l> Lexer<'l> {
         let start_index: usize = self.index;
         let mut end_index: usize = self.index;
 
-        while let Some(chr) = self.source_code.chars().nth(end_index) {
+        while let Some(chr) = self.peek_at(end_index) {
             if is_invalid_character(chr) {
                 break;
             }
@@ -298,6 +299,11 @@ impl<'l> Lexer<'l> {
                 self.consume(3);
                 self.line_index += 3;
                 return TknType::Keyword(Kwrd::Mutable);
+            },
+            "rec" => {
+                self.consume(3);
+                self.line_index += 3;
+                return TknType::Keyword(Kwrd::Recursive);
             },
             "oxy" => {
                 self.consume(3);
@@ -388,7 +394,7 @@ impl<'l> Lexer<'l> {
     }
 
     fn get_operation(&mut self) -> Option<TknType<'l>> {
-        if let Some(chr) = self.source_code.chars().nth(self.index) {
+        if let Some(chr) = self.peek() {
             if !OPERATOR_CHARACTERS.contains(chr) {
                 return None;
             }
@@ -462,6 +468,7 @@ impl<'l> Lexer<'l> {
                     "~" => Some(TknType::Operation(Op::BitwiseNegate)),
                     "<<" => Some(TknType::Operation(Op::BitwiseShiftLeft)),
                     ">>" => Some(TknType::Operation(Op::BitwiseShiftRight)), 
+                    "=>" => Some(TknType::Operation(Op::Arrow)),
                     "=" => Some(TknType::Operation(Op::Assign)),
                     "->" => Some(TknType::Operation(Op::Insert)),
                     _ => unreachable!()
@@ -496,13 +503,13 @@ impl<'l> Lexer<'l> {
 
     fn get_char_literal(&mut self) -> Option<TknType<'l>> {
         
-        match self.source_code.chars().nth(self.index) {
+        match self.peek() {
             Some('\'') => (),
             _ => return None
         }
 
         let mut index = self.index + 1;
-        while let Some(chr) = self.source_code.chars().nth(index) {
+        while let Some(chr) = self.peek_at(index) {
             if chr == '\\' {
                 index += 2;
             } else if chr == '\'' {
@@ -525,13 +532,13 @@ impl<'l> Lexer<'l> {
     }
 
     fn get_string_literal(&mut self) -> Option<TknType<'l>> {
-        match self.source_code.chars().nth(self.index) {
+        match self.peek() {
             Some('\"') => (),
             _ => return None
         }
 
         let mut index = self.index + 1;
-        while let Some(chr) = self.source_code.chars().nth(index) {
+        while let Some(chr) = self.peek_at(index) {
             if chr == '\\' {
                 index += 2;
                 continue;

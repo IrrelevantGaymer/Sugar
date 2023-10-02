@@ -1,16 +1,20 @@
 pub mut fn Main {
-    Std::WriteLn "Hello World!";
+    i32 x = 2;
+    i32 y = 5;
+    i32 z = x Add y;
+
+    Std::WriteLn z;
+    Std::WriteLn "\"Hello World!\"";
 }
 
-//testing comments
-namespace Std {
-    pub mut fn WriteLn $ Display output {
-        /,
-         , do stuff
-         ,/
-    }
+//test comments
+/,
+ , /,
+ ,  , multi line too
+ ,  ,/
+ ,/
 
-    pub mut fn ReadLn<T> : T {
-        TODO;
-    }
+pub fn Add $ i32 i32 : i32;
+pub fn Add $ a infix $ b : i32 {
+    return a + b;
 }

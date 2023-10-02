@@ -3,10 +3,10 @@ use std::fmt::Display;
 pub type Tkn<'t> = Token<'t>;
 #[derive(Clone, Debug)]
 pub struct Token<'t> {
-    token: TknType<'t>,
-    file_name: String,
-    line_index: usize,
-    line_number: usize
+    pub token: TknType<'t>,
+    pub file_name: String,
+    pub line_index: usize,
+    pub line_number: usize
 }
 
 impl<'t> Token<'t> {
@@ -31,7 +31,7 @@ impl<'t> Display for Token<'t> {
 }
 
 pub type TknType<'t> = TokenType<'t>;
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TokenType<'t> {
     Keyword(Kwrd),
     Type(Type),
@@ -76,13 +76,14 @@ impl<'t> Display for TokenType<'t> {
 }
 
 pub type Kwrd = Keyword;
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Keyword {
     Let,
     Return,
 
     Loop,
     Mutable,
+    Recursive,
     Oxidize,
     Unsafe,
     
@@ -105,7 +106,7 @@ pub enum Keyword {
 }
 
 pub type Op = Operator;
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operator {
     BangRangeEquals, // !..=
     BangRange, // !..
@@ -158,11 +159,13 @@ pub enum Operator {
     BitwiseShiftLeft, // <<
     BitwiseShiftRight, // >>
     
+    Arrow, // =>
+
     Assign, // =
     Insert, // ->
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Type {
     Integer(u8),
     UnsignedInteger(u8),
@@ -170,4 +173,16 @@ pub enum Type {
 
     Character,
     Boolean,
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Integer(size) => write!(f, "i{}", size),
+            Self::UnsignedInteger(size) => write!(f, "u{}", size),
+            Self::Float(size) => write!(f, "f{}", size),
+            Self::Character => write!(f, "char"),
+            Self::Boolean => write!(f, "bool")
+        }
+    }
 }
