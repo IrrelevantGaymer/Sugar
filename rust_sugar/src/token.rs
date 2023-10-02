@@ -3,7 +3,7 @@ use std::fmt::Display;
 pub type Tkn<'t> = Token<'t>;
 #[derive(Clone, Debug)]
 pub struct Token<'t> {
-    token: TokenType<'t>,
+    token: TknType<'t>,
     file_name: String,
     line_index: usize,
     line_number: usize
@@ -33,10 +33,10 @@ impl<'t> Display for Token<'t> {
 pub type TknType<'t> = TokenType<'t>;
 #[derive(Clone, Debug)]
 pub enum TokenType<'t> {
-    Keyword(Keyword),
+    Keyword(Kwrd),
     Type(Type),
     Identifier(String),
-    Operation(Operator),
+    Operation(Op),
 
     IntegerLiteral(i128),
     FloatLiteral(f64),
@@ -63,7 +63,7 @@ pub enum TokenType<'t> {
     Dot,
     Borrow,
 
-    Either(&'t TokenType<'t>, &'t TokenType<'t>),
+    Either(&'t TknType<'t>, &'t TknType<'t>),
 
     EndOfFile,
     Invalid,
@@ -79,6 +79,7 @@ pub type Kwrd = Keyword;
 #[derive(Clone, Debug)]
 pub enum Keyword {
     Let,
+    Return,
 
     Loop,
     Mutable,

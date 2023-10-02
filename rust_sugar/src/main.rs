@@ -1,6 +1,8 @@
 mod lexer;
-mod string_utils;
+mod parser;
 mod token;
+mod syntax;
+mod string_utils;
 
 use std::env;
 use std::fs;

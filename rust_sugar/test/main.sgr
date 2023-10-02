@@ -1,5 +1,16 @@
-pub fn Main {
-    let str = "Hello World";
-    i32 x y = 3;
-    std::writeln x + y;
+pub mut fn Main {
+    Std::WriteLn "Hello World!";
+}
+
+//testing comments
+namespace Std {
+    pub mut fn WriteLn $ Display output {
+        /,
+         , do stuff
+         ,/
+    }
+
+    pub mut fn ReadLn<T> : T {
+        TODO;
+    }
 }
