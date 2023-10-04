@@ -1,4 +1,8 @@
+extern crate num;
+
 use std::fmt::Display;
+
+use num_derive::FromPrimitive;
 
 pub type Tkn<'t> = Token<'t>;
 #[derive(Clone, Debug)]
@@ -31,7 +35,7 @@ impl<'t> Display for Token<'t> {
 }
 
 pub type TknType<'t> = TokenType<'t>;
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum TokenType<'t> {
     Keyword(Kwrd),
     Type(Type),
@@ -72,6 +76,68 @@ pub enum TokenType<'t> {
 impl<'t> Display for TokenType<'t> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+impl<'t> Eq for TknType<'t> {}
+
+impl<'t> PartialEq for TknType<'t> {
+    fn eq (&self, other: &Self) -> bool {
+        if let TknType::Either(left, right) = self {
+            if let TknType::Either(other_left, other_right) = other {
+                return left == other_left
+                    || left == other_right
+                    || right == other_left
+                    || right == other_right;
+            }
+            return *left == other
+                || *right == other;
+        }
+
+        if let TknType::Either(other_left, other_right) = other {
+            return self == *other_left
+                || self == *other_right;
+        }
+        
+        return match (self, other) {
+            (TknType::Keyword(left), TknType::Keyword(right)) => left == right,
+            (TknType::Type(left), TknType::Type(right)) => left == right,
+            (TknType::Identifier(left), TknType::Identifier(right)) => left == right,
+            (TknType::Operation(left), TknType::Operation(right)) => left == right,
+            (TknType::IntegerLiteral(left), TknType::IntegerLiteral(right)) => left == right,
+            (TknType::FloatLiteral(left), TknType::FloatLiteral(right)) => left == right,
+            (TknType::CharLiteral(left), TknType::CharLiteral(right)) => left == right,
+            (TknType::StringLiteral(left), TknType::StringLiteral(right)) => left == right,
+            (TknType::Semicolon, TknType::Semicolon) => true,
+            (TknType::NewLine, TknType::NewLine) => true,
+            (TknType::Spaces(left), TknType::Spaces(right)) => left == right,
+            (TknType::Question, TknType::Question) => true,
+            (TknType::Dollar,TknType::Dollar) => true,
+            (TknType::OpenParen,TknType::OpenParen) => true,
+            (TknType::CloseParen,TknType::CloseParen) => true,
+            (TknType::OpenCurlyBrace,TknType::OpenCurlyBrace) => true,
+            (TknType::CloseCurlyBrace,TknType::CloseCurlyBrace) => true,
+            (TknType::OpenSquareBracket,TknType::OpenSquareBracket) => true,
+            (TknType::CloseSquareBracket,TknType::CloseSquareBracket) => true,
+            (TknType::OpenAngularBracket,TknType::OpenAngularBracket) => true,
+            (TknType::CloseAngularBracket,TknType::CloseAngularBracket) => true,
+            (TknType::ColonColon,TknType::ColonColon) => true,
+            (TknType::Colon,TknType::Colon) => true,
+            (TknType::Dot,TknType::Dot) => true,
+            (TknType::Borrow,TknType::Borrow) => true,
+            (TknType::EndOfFile,TknType::EndOfFile) => true,
+            (TknType::Invalid,TknType::Invalid) => true,
+
+            _ =>  false
+
+        }
+
+    }
+}
+
+impl<'t> std::hash::Hash for TknType<'t> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
     }
 }
 
@@ -164,6 +230,7 @@ pub enum Operator {
     Assign, // =
     Insert, // ->
 }
+
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {

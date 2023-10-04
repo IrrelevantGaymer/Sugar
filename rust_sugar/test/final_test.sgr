@@ -1,0 +1,20 @@
+pub mut fn Main {
+    i32 x = 2;
+    i32 y = 5;
+    i32 z = x Add y;
+
+    Std::WriteLn z;
+    Std::WriteLn "\"Hello World!\"";
+}
+
+//test comments
+/,
+ , /,
+ ,  , multi line too
+ ,  ,/
+ ,/
+
+pub fn Add $ i32 i32 : i32;
+pub fn Add $ a infix $ b : i32 {
+    return a + b;
+}

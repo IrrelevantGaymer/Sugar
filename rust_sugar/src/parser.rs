@@ -1,17 +1,27 @@
-use crate::token;
-use crate::token::{Tkn, TknType, Kwrd};
-use crate::syntax;
-use crate::syntax::{Stmt, Expr, Fn, FnParam};
+#[allow(dead_code)]
+
+use crate::token::{Tkn, TknType, Kwrd, Op};
+use crate::syntax::{
+    Stmt, Expr, Fn, FnParam, 
+    OpAssoc, OpPrec, OPERATOR_INFO_MAP, 
+    UnOp, BinOp, Lit};
 use if_chain::if_chain;
 
 
 pub struct Parser<'p> {
-    tokens: &'p [Tkn<'p>],
+    tokens: Vec<Tkn<'p>>,
     index: usize,
-    location: String,
+    location: &'p str,
 }
 
 impl<'p> Parser<'p> {
+    pub fn new (location: &'p str, tokens: Vec<Tkn<'p>>) -> Parser<'p> {
+        return Parser {
+            tokens: tokens,
+            index: 0,
+            location: location
+        };
+    }
 
     fn get_token(&self) -> &TknType {
         return &self.tokens[self.index].token;
@@ -76,7 +86,7 @@ impl<'p> Parser<'p> {
                 self.expect_token(TknType::CloseCurlyBrace, &mut peek)?;
                 stmt = Stmt::Compound(stmts);
             },
-            TknType::Operation(token::Op::Arrow) => {
+            TknType::Operation(Op::Arrow) => {
                 peek += 1;
                 stmt = self.parse_compound_statement()?;
             },
@@ -84,8 +94,10 @@ impl<'p> Parser<'p> {
             _ => return None
         }
 
+        let location = String::from(self.location);
+        
         return Some(Fn {
-            location: self.location.clone(),
+            location: location,
             accessibility: accessibility,
             mutable: mutable,
             recursive: recursive,
@@ -95,10 +107,18 @@ impl<'p> Parser<'p> {
         });
     }
 
+    fn parse_accessor(&self) {
+
+    }
+
+    fn parse_struct(&self) {
+
+    }
+
     fn parse_statement(&self) -> Option<Stmt> {
         todo!();
     }
-
+    
     fn parse_variable_declaration(&self, index: usize) -> Option<Vec<Stmt>> {
         let mut peek = index;
         let data_type: Option<String> = match self.get_token_at(peek) {
@@ -120,8 +140,8 @@ impl<'p> Parser<'p> {
         if idents.len() == 0 { return None; }
 
         if_chain!{
-            if self.is_expected_token(TknType::Operation(token::Op::Assign), &mut peek);
-            if let Some(expr) = self.parse_expression();
+            if self.is_expected_token(TknType::Operation(Op::Assign), &mut peek);
+            if let Some(expr) = self.parse_expression(&mut peek, 0);
             then {
                 for i in 0..idents.len() {
                     stmts.push(Stmt::Assign(
@@ -147,7 +167,7 @@ impl<'p> Parser<'p> {
         loop {
             if_chain!{
                 if let TknType::Identifier(ident) = self.get_token_at(peek);
-                if let TknType::Operation(token::Op::Assign) = self.get_token_at(peek + 1);
+                if let TknType::Operation(Op::Assign) = self.get_token_at(peek + 1);
                 then {
                     idents.push(ident.clone());
                     peek += 2;
@@ -158,7 +178,7 @@ impl<'p> Parser<'p> {
             }
         }
 
-        if let Some(expr) = self.parse_expression() {
+        if let Some(expr) = self.parse_expression(&mut peek, 0) {
             let mut stmts: Vec<Stmt> = vec![];
             for i in 0..idents.len() {
                 stmts.push(Stmt::Assign(Expr::Identifier(idents[i].clone()), expr.clone()));
@@ -178,11 +198,111 @@ impl<'p> Parser<'p> {
     }
 
     fn parse_compound_statement(&self) -> Option<Stmt> {
+        
+        
         todo!();
     }
 
-    fn parse_expression(&self) -> Option<Expr> {
-        todo!();
+    pub fn parse_expression(&self, index: &mut usize, min_prec: u32) -> Option<Expr<'p>> {
+        let mut peek = *index;
+        let mut left_expr = self.parse_atom(&mut peek).unwrap();
+        loop {
+            let operator = self.get_token_at(peek);
+
+            if !OPERATOR_INFO_MAP.contains_key(operator) {
+                break;
+            }
+
+            let (prec, assoc) = OPERATOR_INFO_MAP[operator];
+            let prec = prec as u32;
+
+            if prec < min_prec {
+                break;
+            }
+
+            let next_min_prec = if assoc == OpAssoc::Left { prec + 1 } else { prec };
+
+            peek += 1;
+
+            let right_expr = self.parse_expression(&mut peek, next_min_prec).unwrap();
+
+            left_expr = Expr::BinaryOp(BinOp::get_bin_op(operator), 
+                Box::new(left_expr), 
+                Box::new(right_expr)
+            );
+        }
+
+        *index = peek;
+        return Some(left_expr);
+    }
+
+    fn parse_atom(&self, index: &mut usize) -> Option<Expr<'p>> {
+        let peek = *index;
+        let mut skip = 0;
+        let curr_token = self.get_token_at(peek);
+
+        let op: Option<UnOp>;
+        if curr_token == &TknType::Operation(Op::Plus) {
+            op = Some(UnOp::Plus);
+            skip += 1;
+        } else if curr_token == &TknType::Operation(Op::Minus) {
+            op = Some(UnOp::Minus);
+            skip += 1;
+        } else if curr_token == &TknType::Operation(Op::LogicNot) {
+            op = Some(UnOp::LogicNot);
+            skip += 1;
+        } else if curr_token == &TknType::Operation(Op::BitwiseNegate) {
+            op = Some(UnOp::BitwiseNegate);
+            skip += 1;
+        } else if curr_token == &TknType::Borrow {
+            if self.get_token_at(peek + 1)  == &TknType::Keyword(Kwrd::Mutable) {
+                op = Some(UnOp::BorrowMutable);
+                skip += 2;
+            } else {
+                op = Some(UnOp::Borrow);
+                skip += 1;
+            }
+        } else {
+            op = None;
+        }
+
+        let expr;
+        if let TknType::Identifier(ident) = curr_token {
+            expr = Expr::Identifier(ident.clone());
+            skip += 1;
+        } else if let TknType::IntegerLiteral(int) = curr_token {
+            expr = Expr::Literal(Lit::IntegerLiteral(*int));
+            skip += 1;
+        } else if let TknType::FloatLiteral(float) = curr_token {
+            expr = Expr::Literal(Lit::FloatLiteral(*float));
+            skip += 1;
+        } else if let TknType::CharLiteral(chr) = curr_token {
+            expr = Expr::Literal(Lit::CharLiteral(*chr));
+            skip += 1;
+        } else if let TknType::StringLiteral(string) = curr_token {
+            expr = Expr::Literal(Lit::StringLiteral(string.clone()));
+            skip += 1;
+        } else if curr_token == &TknType::OpenParen {
+            expr = self.parse_group_expression(peek).unwrap();
+        } else {
+            return None;
+        }
+
+        *index += skip;
+        match op {
+            None => return Some(expr),
+            Some(op) => return Some(Expr::UnaryOp(op, Box::new(expr)))
+        }
+    }
+
+    fn parse_group_expression(&self, index: usize) -> Option<Expr<'p>> {
+        let mut peek = index;
+
+        self.expect_token(TknType::OpenParen, &mut peek).unwrap();
+        let expr = self.parse_expression(&mut peek, 0);
+        self.expect_token(TknType::CloseParen, &mut peek).unwrap();
+        
+        return expr;
     }
 
     fn expect_token(&self, expected: TknType, index: &mut usize) -> Option<()> {
