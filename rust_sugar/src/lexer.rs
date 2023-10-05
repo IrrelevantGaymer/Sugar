@@ -350,6 +350,16 @@ impl<'l> Lexer<'l> {
                 self.line_index += 5;
                 return TknType::Keyword(Kwrd::Alias);
             },
+            "true" => {
+                self.consume(4);
+                self.line_index += 4;
+                return TknType::BooleanLiteral(true);
+            },
+            "false" => {
+                self.consume(5);
+                self.line_index += 5;
+                return TknType::BooleanLiteral(false);
+            },
             "pub" => {
                 self.consume(3);
                 self.line_index += 3;

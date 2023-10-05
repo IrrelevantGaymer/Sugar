@@ -46,6 +46,7 @@ pub enum TokenType<'t> {
     FloatLiteral(f64),
     CharLiteral(char),
     StringLiteral(String),
+    BooleanLiteral(bool),
 
     Semicolon,
     NewLine,

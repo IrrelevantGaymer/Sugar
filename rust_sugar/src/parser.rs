@@ -1,10 +1,10 @@
 #[allow(dead_code)]
 
 use crate::token::{Tkn, TknType, Kwrd, Op};
-use crate::syntax::{
+use crate::{syntax::{
     Stmt, Expr, Fn, FnParam, 
     OpAssoc, OpPrec, OPERATOR_INFO_MAP, 
-    UnOp, BinOp, Lit};
+    UnOp, BinOp, Lit}, option_result_utils::Resultable};
 use if_chain::if_chain;
 
 
@@ -32,8 +32,26 @@ impl<'p> Parser<'p> {
     }
 
     pub fn parse(&mut self) {
-        let functions: Vec<Fn> = vec![];
+        let accessor_names: Vec<(String, &[Tkn])> = vec![];
+        let struct_names: Vec<(String, &[Tkn])> = vec![];
+        let function_names: Vec<(String, usize, usize, &[Tkn])> = vec![];
         let actions: Vec<Stmt> = vec![];
+
+
+    }
+
+    pub fn define_accessor(&mut self) -> Option<(String, &[Tkn])> {
+        todo!();
+    }
+
+    pub fn define_struct(&mut self) -> Option<(String, &[Tkn])> {
+        todo!();
+    }
+
+    pub fn define_function(&mut self) -> Option<(String, usize, usize, &[Tkn])> {
+        let mut peek = self.index;
+        
+        todo!();
     }
 
     pub fn parse_function(&mut self) -> Option<Fn> {
@@ -119,13 +137,13 @@ impl<'p> Parser<'p> {
         todo!();
     }
     
-    fn parse_variable_declaration(&self, index: usize) -> Option<Vec<Stmt>> {
-        let mut peek = index;
+    fn parse_variable_declaration(&self, index: &mut usize) -> Result<Vec<Stmt>, (&Tkn, String)> {
+        let mut peek = *index;
         let data_type: Option<String> = match self.get_token_at(peek) {
             TknType::Type(data) => Some(data.to_string()),
             TknType::Keyword(Kwrd::Let) => None,
             TknType::Identifier(data) => Some(data.to_string()),
-            _ => return None
+            _ => return Err((&self.tokens[*index], "Unexpected Token.  Expected a Type, Identifier, or Let".to_string()))
         };
 
         peek += 1;
@@ -137,11 +155,14 @@ impl<'p> Parser<'p> {
             peek += 1;
         }
 
-        if idents.len() == 0 { return None; }
+        if idents.len() == 0 { return Err((
+            &self.tokens[*index], 
+            "Expected identifier(s) to be declared".to_string()
+        )); }
 
         if_chain!{
             if self.is_expected_token(TknType::Operation(Op::Assign), &mut peek);
-            if let Some(expr) = self.parse_expression(&mut peek, 0);
+            if let Ok(expr) = self.parse_expression(&mut peek, 0);
             then {
                 for i in 0..idents.len() {
                     stmts.push(Stmt::Assign(
@@ -155,12 +176,16 @@ impl<'p> Parser<'p> {
         self.expect_token(TknType::Either(
             &TknType::Semicolon,
             &TknType::NewLine
-        ), &mut peek)?;
+        ), &mut peek)
+        .to_result_with_error((
+            &self.tokens[peek], 
+            "Expected Semicolon or Newline".to_string()
+        ))?;
 
-        return Some(stmts);
+        return Ok(stmts);
     }
 
-    fn parse_variable_assignment(&self, index: usize) -> Option<Vec<Stmt>> {
+    fn parse_variable_assignment(&self, index: usize) -> Result<Vec<Stmt>, (&Tkn, String)> {
         let mut peek = index;
         let mut idents: Vec<String> = vec![];
 
@@ -178,15 +203,19 @@ impl<'p> Parser<'p> {
             }
         }
 
-        if let Some(expr) = self.parse_expression(&mut peek, 0) {
+        let token_index = peek;
+        if let Ok(expr) = self.parse_expression(&mut peek, 0) {
             let mut stmts: Vec<Stmt> = vec![];
             for i in 0..idents.len() {
                 stmts.push(Stmt::Assign(Expr::Identifier(idents[i].clone()), expr.clone()));
             }
-            return Some(stmts);
+            return Ok(stmts);
         }
 
-        return None;
+        return Err((
+            &self.tokens[token_index], 
+            "".to_string()
+        ));
     }
 
     fn parse_variable_insertion(&self, index: usize) -> Option<Stmt> {
@@ -203,9 +232,9 @@ impl<'p> Parser<'p> {
         todo!();
     }
 
-    pub fn parse_expression(&self, index: &mut usize, min_prec: u32) -> Option<Expr<'p>> {
+    pub fn parse_expression(&self, index: &mut usize, min_prec: u32) -> Result<Expr<'p>, (&Tkn, String)> {
         let mut peek = *index;
-        let mut left_expr = self.parse_atom(&mut peek).unwrap();
+        let mut left_expr = self.parse_atom(&mut peek)?;
         loop {
             let operator = self.get_token_at(peek);
 
@@ -224,7 +253,7 @@ impl<'p> Parser<'p> {
 
             peek += 1;
 
-            let right_expr = self.parse_expression(&mut peek, next_min_prec).unwrap();
+            let right_expr = self.parse_expression(&mut peek, next_min_prec)?;
 
             left_expr = Expr::BinaryOp(BinOp::get_bin_op(operator), 
                 Box::new(left_expr), 
@@ -233,76 +262,88 @@ impl<'p> Parser<'p> {
         }
 
         *index = peek;
-        return Some(left_expr);
+        return Ok(left_expr);
     }
 
-    fn parse_atom(&self, index: &mut usize) -> Option<Expr<'p>> {
-        let peek = *index;
-        let mut skip = 0;
-        let curr_token = self.get_token_at(peek);
+    fn parse_atom(&self, index: &mut usize) -> Result<Expr<'p>, (&Tkn, String)> {
+        let mut peek = *index;
+        let mut curr_token = self.get_token_at(peek);
 
         let op: Option<UnOp>;
         if curr_token == &TknType::Operation(Op::Plus) {
             op = Some(UnOp::Plus);
-            skip += 1;
+            peek += 1;
         } else if curr_token == &TknType::Operation(Op::Minus) {
             op = Some(UnOp::Minus);
-            skip += 1;
+            peek += 1;
         } else if curr_token == &TknType::Operation(Op::LogicNot) {
             op = Some(UnOp::LogicNot);
-            skip += 1;
+            peek += 1;
         } else if curr_token == &TknType::Operation(Op::BitwiseNegate) {
             op = Some(UnOp::BitwiseNegate);
-            skip += 1;
+            peek += 1;
         } else if curr_token == &TknType::Borrow {
             if self.get_token_at(peek + 1)  == &TknType::Keyword(Kwrd::Mutable) {
                 op = Some(UnOp::BorrowMutable);
-                skip += 2;
+                peek += 2;
             } else {
                 op = Some(UnOp::Borrow);
-                skip += 1;
+                peek += 1;
             }
         } else {
             op = None;
         }
 
+        curr_token = self.get_token_at(peek);
+
         let expr;
         if let TknType::Identifier(ident) = curr_token {
             expr = Expr::Identifier(ident.clone());
-            skip += 1;
+            peek += 1;
         } else if let TknType::IntegerLiteral(int) = curr_token {
             expr = Expr::Literal(Lit::IntegerLiteral(*int));
-            skip += 1;
+            peek += 1;
         } else if let TknType::FloatLiteral(float) = curr_token {
             expr = Expr::Literal(Lit::FloatLiteral(*float));
-            skip += 1;
+            peek += 1;
         } else if let TknType::CharLiteral(chr) = curr_token {
             expr = Expr::Literal(Lit::CharLiteral(*chr));
-            skip += 1;
+            peek += 1;
         } else if let TknType::StringLiteral(string) = curr_token {
             expr = Expr::Literal(Lit::StringLiteral(string.clone()));
-            skip += 1;
-        } else if curr_token == &TknType::OpenParen {
-            expr = self.parse_group_expression(peek).unwrap();
+            peek += 1;
+        } else if let TknType::BooleanLiteral(b) = curr_token {
+            expr = Expr::Literal(Lit::BooleanLiteral(*b));
+            peek += 1;  
+        } else if curr_token == &TknType::OpenParen || curr_token == &TknType::Dollar {
+            expr = self.parse_group_expression(&mut peek)?;
         } else {
-            return None;
+            return Err((
+                &self.tokens[peek], 
+                "Unexpected Token.  Expected an Identifier, Literal, '(', or '$'".to_string()
+            ));
         }
 
-        *index += skip;
+        *index = peek;
         match op {
-            None => return Some(expr),
-            Some(op) => return Some(Expr::UnaryOp(op, Box::new(expr)))
+            None => return Ok(expr),
+            Some(op) => return Ok(Expr::UnaryOp(op, Box::new(expr)))
         }
     }
 
-    fn parse_group_expression(&self, index: usize) -> Option<Expr<'p>> {
-        let mut peek = index;
-
-        self.expect_token(TknType::OpenParen, &mut peek).unwrap();
-        let expr = self.parse_expression(&mut peek, 0);
-        self.expect_token(TknType::CloseParen, &mut peek).unwrap();
-        
-        return expr;
+    fn parse_group_expression(&self, index: &mut usize) -> Result<Expr<'p>, (&Tkn, String)> {
+        if self.is_expected_token(TknType::OpenParen, index) {
+            let expr = self.parse_expression(index, 0).unwrap();
+            self.expect_token(TknType::CloseParen, index).unwrap();
+            return Ok(expr);
+        } else if self.is_expected_token(TknType::Dollar, index) {
+            let expr = self.parse_expression(index, 0).unwrap();
+            return Ok(expr);
+        }
+        return Err((
+            &self.tokens[*index], 
+            "Unexpected Token.  Was expecting an '(' or a '$'".to_string()
+        ));
     }
 
     fn expect_token(&self, expected: TknType, index: &mut usize) -> Option<()> {

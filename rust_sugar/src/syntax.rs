@@ -20,7 +20,7 @@ pub enum Statement<'s> {
 
 pub type Expr<'e> = Expression<'e>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Expression<'e> {
     Identifier(String),
     Literal(Lit),
@@ -33,16 +33,17 @@ pub enum Expression<'e> {
 
 pub type Lit = Literal;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
     IntegerLiteral(i128),
     FloatLiteral(f64),
     CharLiteral(char),
     StringLiteral(String),
+    BooleanLiteral(bool)
 }
 
 pub type UnOp = UnaryOperator;
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum UnaryOperator {
     Plus,
     Minus,
@@ -53,7 +54,7 @@ pub enum UnaryOperator {
 }
 
 pub type BinOp = BinaryOperator;
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum BinaryOperator {
     BangRangeEquals, // !..=
     BangRange, // !..

@@ -3,11 +3,14 @@ mod parser;
 mod token;
 mod syntax;
 mod string_utils;
+mod option_result_utils;
 
 use std::env;
 use std::fs;
 
 use syntax::{Expr, UnOp, BinOp, Lit};
+
+use if_chain::if_chain;
 
 fn main() {
     let file_path = env::args().nth(1).unwrap();
@@ -27,25 +30,159 @@ fn main() {
 
 }
 
-fn eval(expr: Expr) -> i32 {
+fn eval(expr: Expr) -> Expr {
     if let Expr::BinaryOp(op, left, right) = expr {
-        return match op {
-            BinOp::Exponent => eval(*left).pow(eval(*right) as u32),
-            BinOp::Multiply => eval(*left) * eval(*right),
-            BinOp::IntDivide => eval(*left) / eval(*right),
-            BinOp::Modulo => eval(*left) % eval(*right),
-            BinOp::Plus => eval(*left) + eval(*right),
-            BinOp::Minus => eval(*left) - eval(*right),
+        let left_expr = eval(*left);
+        let right_expr = eval(*right);
+        match op {
+            BinOp::Exponent => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        if num2 < 0 {
+                            return Expr::Literal(Lit::FloatLiteral((num1 as f64).powf(num2 as f64)));
+                        }
+                        return Expr::Literal(Lit::IntegerLiteral(num1.pow(num2 as u32)));
+                    }
+                }
+            },
+            BinOp::Multiply => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::IntegerLiteral(num1 * num2));
+                    }
+                }
+            },
+            BinOp::IntDivide => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::IntegerLiteral(num1 / num2));
+                    }
+                }
+            },
+            BinOp::Modulo => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::IntegerLiteral(num1 % num2));
+                    }
+                }
+            },
+            BinOp::Plus => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::IntegerLiteral(num1 + num2));
+                    }
+                }
+            },
+            BinOp::Minus => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::IntegerLiteral(num1 - num2));
+                    }
+                }
+            },
+            BinOp::LogicAnd => {
+                if_chain!{
+                    if let Expr::Literal(Lit::BooleanLiteral(b1)) = left_expr;
+                    if let Expr::Literal(Lit::BooleanLiteral(b2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::BooleanLiteral(b1 && b2));
+                    }
+                }
+            },
+            BinOp::LogicOr => {
+                if_chain!{
+                    if let Expr::Literal(Lit::BooleanLiteral(b1)) = left_expr;
+                    if let Expr::Literal(Lit::BooleanLiteral(b2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::BooleanLiteral(b1 || b2));
+                    }
+                }
+            },
+            BinOp::LogicXor => {
+                if_chain!{
+                    if let Expr::Literal(Lit::BooleanLiteral(b1)) = left_expr;
+                    if let Expr::Literal(Lit::BooleanLiteral(b2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::BooleanLiteral(b1 ^ b2));
+                    }
+                }
+            },
+            BinOp::Equals => {
+                return Expr::Literal(Lit::BooleanLiteral(left_expr == right_expr));
+            },
+            BinOp::NotEquals => {
+                return Expr::Literal(Lit::BooleanLiteral(left_expr != right_expr));
+            },
+            BinOp::LessThan => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::BooleanLiteral(num1 < num2));
+                    }
+                }
+            },
+            BinOp::LessThanEqualTo => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::BooleanLiteral(num1 <= num2));
+                    }
+                }
+            },
+            BinOp::GreaterThan => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::BooleanLiteral(num1 > num2));
+                    }
+                }
+            },
+            BinOp::GreaterThanEqualTo => {
+                if_chain!{
+                    if let Expr::Literal(Lit::IntegerLiteral(num1)) = left_expr;
+                    if let Expr::Literal(Lit::IntegerLiteral(num2)) = right_expr;
+                    then {
+                        return Expr::Literal(Lit::BooleanLiteral(num1 >= num2));
+                    }
+                }
+            },
             _ => todo!("{:?} not implemented yet", op)
         }
+        return Expr::BinaryOp(op, Box::new(left_expr), Box::new(right_expr));
     } else if let Expr::UnaryOp(op, value) = expr {
-        return match op {
-            UnOp::Plus => eval(*value),
-            UnOp::Minus => -eval(*value),
+        match op {
+            UnOp::Plus => {
+                if let Expr::Literal(Lit::IntegerLiteral(num)) = *value {
+                    return Expr::Literal(Lit::IntegerLiteral(num));
+                }
+            },
+            UnOp::Minus => {
+                if let Expr::Literal(Lit::IntegerLiteral(num)) = *value {
+                    return Expr::Literal(Lit::IntegerLiteral(-num));
+                }
+            },
             _ => todo!("{:?} not implemented yet", op)
         }
+        return Expr::UnaryOp(op, Box::new(*value));
     } else if let Expr::Literal(Lit::IntegerLiteral(int)) = expr {
-        return int as i32;
+        return Expr::Literal(Lit::IntegerLiteral(int));
+    } else if let Expr::Literal(Lit::BooleanLiteral(b)) = expr {
+        return Expr::Literal(Lit::BooleanLiteral(b));
     } else {
         todo!("{:?}", expr);
     }
