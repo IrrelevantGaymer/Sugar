@@ -48,11 +48,11 @@ pub enum TokenType<'t> {
     StringLiteral(String),
     BooleanLiteral(bool),
 
+    Comma,
     Semicolon,
     NewLine,
     Spaces(usize),
 
-    Question,
     Dollar,
     OpenParen,
     CloseParen,
@@ -112,7 +112,6 @@ impl<'t> PartialEq for TknType<'t> {
             (TknType::Semicolon, TknType::Semicolon) => true,
             (TknType::NewLine, TknType::NewLine) => true,
             (TknType::Spaces(left), TknType::Spaces(right)) => left == right,
-            (TknType::Question, TknType::Question) => true,
             (TknType::Dollar,TknType::Dollar) => true,
             (TknType::OpenParen,TknType::OpenParen) => true,
             (TknType::CloseParen,TknType::CloseParen) => true,
@@ -148,7 +147,12 @@ pub enum Keyword {
     Let,
     Return,
 
+    For,
+    While,
     Loop,
+    If,
+    Else,
+
     Mutable,
     Recursive,
     Oxidize,

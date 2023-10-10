@@ -70,9 +70,9 @@ impl<'l> Lexer<'l> {
             let line = self.line_number;
 
             match chr {
-                '/' => {
+                '#' => {
                     match self.peek_after(1) {
-                        Some('/') => {
+                        Some('#') => {
                             let mut after = 2;
                             while let Some(chr) = self.peek_after(after) {
                                 if chr == '\n' || chr == '\r' {
@@ -95,10 +95,10 @@ impl<'l> Lexer<'l> {
                                 let (Some(chr1), Some(chr2)) = 
                                 (self.peek_after(after), self.peek_after(after + 1)) 
                             {
-                                if chr1 == '/' && chr2 == ',' {
+                                if chr1 == '#' && chr2 == ',' {
                                     count += 1;
                                     after += 2;
-                                } else if chr1 == ',' && chr2 == '/' {
+                                } else if chr1 == ',' && chr2 == '#' {
                                     count -= 1;
                                     after += 2;
                                 } else if chr1 == '\n' || chr1 == '\r' {
@@ -132,13 +132,13 @@ impl<'l> Lexer<'l> {
                             token = TknType::Invalid;
                         }
                     }
-                }
-                '?' => {
-                    token = TknType::Question;
+                },
+                ',' => {
+                    token = TknType::Comma;
                     new_line = false;
                     self.consume(1);
                     self.line_index += 1;
-                },
+                }
                 '$' => {
                     token = TknType::Dollar;
                     new_line = false;
@@ -290,6 +290,26 @@ impl<'l> Lexer<'l> {
                 self.line_index += 6;
                 return TknType::Keyword(Kwrd::Return);
             },
+            "if" => {
+                self.consume(2);
+                self.line_index += 2;
+                return TknType::Keyword(Kwrd::If);
+            },
+            "else" => {
+                self.consume(4);
+                self.line_index += 4;
+                return TknType::Keyword(Kwrd::Else);
+            },
+            "for" => {
+                self.consume(3);
+                self.line_index += 3;
+                return TknType::Keyword(Kwrd::For);
+            },
+            "while" => {
+                self.consume(5);
+                self.line_index += 5;
+                return TknType::Keyword(Kwrd::While);
+            },
             "loop" => {
                 self.consume(4);
                 self.line_index += 4;
@@ -321,8 +341,8 @@ impl<'l> Lexer<'l> {
                 return TknType::Keyword(Kwrd::Function);
             },
             "accessor" => {
-                self.consume(7);
-                self.line_index += 7;
+                self.consume(8);
+                self.line_index += 8;
                 return TknType::Keyword(Kwrd::Accessor);
             },
             "whitelist" => {

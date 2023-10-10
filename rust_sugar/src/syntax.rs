@@ -189,6 +189,7 @@ pub struct Function<'f> {
     pub recursive: bool,
     pub name: String,
     pub arguments: &'f [FnParam<'f>],
+    pub return_type: String,
     pub body: Stmt<'f>
 }
 
@@ -196,7 +197,7 @@ pub type FnParam<'fp> = FunctionParamater<'fp>;
 #[derive(Clone, Debug)]
 pub struct FunctionParamater<'fp> {
     param_type: String,
-    param_name: String,
+    param_name: Option<String>,
     param_default: Option<Expr<'fp>>
 }
 

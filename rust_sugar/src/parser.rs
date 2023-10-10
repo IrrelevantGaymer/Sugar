@@ -10,53 +10,87 @@ use if_chain::if_chain;
 
 pub struct Parser<'p> {
     tokens: Vec<Tkn<'p>>,
-    index: usize,
     location: &'p str,
+}
+
+enum FnType {
+    Prefix, Infix, Postfix
 }
 
 impl<'p> Parser<'p> {
     pub fn new (location: &'p str, tokens: Vec<Tkn<'p>>) -> Parser<'p> {
         return Parser {
             tokens: tokens,
-            index: 0,
             location: location
         };
-    }
-
-    fn get_token(&self) -> &TknType {
-        return &self.tokens[self.index].token;
     }
 
     fn get_token_at(&self, index: usize) -> &TknType {
         return &self.tokens[index].token;
     }
 
-    pub fn parse(&mut self) {
-        let accessor_names: Vec<(String, &[Tkn])> = vec![];
-        let struct_names: Vec<(String, &[Tkn])> = vec![];
-        let function_names: Vec<(String, usize, usize, &[Tkn])> = vec![];
-        let actions: Vec<Stmt> = vec![];
+    pub fn parse(&self) {
+        let mut accessor_names: Vec<(String, &[Tkn])> = vec![];
+        let mut struct_names: Vec<(String, String, &[Tkn])> = vec![];
+        let mut function_names: Vec<(String, String, bool, bool, &[Tkn], &[Tkn])> = vec![];
+        let mut actions: Vec<Stmt> = vec![];
 
+        let mut index: usize = 0;
+        while index < self.tokens.len() {
+            if let Some(def) = self.define_accessor(&mut index) {
+                accessor_names.push(def);
+            } else if let Some(def) = self.define_struct(&mut index) {
+                struct_names.push(def);
+            } else if let Some(def) = self.define_function(&mut index) {
+                function_names.push(def);
+            } else if self.get_token_at(index) == &TknType::NewLine {
+                index += 1;
+            } else if let TknType::Spaces(_) = self.get_token_at(index) {
+                index += 1;
+            } else if self.get_token_at(index) == &TknType::EndOfFile {
+                break;
+            } else {
+                panic!("Could not parse token {}", &self.tokens[index]);
+            }
+        }
 
+        dbg!(accessor_names);
+        dbg!(function_names);
+        dbg!(struct_names);
     }
 
-    pub fn define_accessor(&mut self) -> Option<(String, &[Tkn])> {
-        todo!();
+    pub fn define_accessor(&self, index: &mut usize) -> Option<(String, &[Tkn])> {
+        let mut peek = *index;
+        let name: String;
+
+        self.expect_token(TknType::Keyword(Kwrd::Accessor), &mut peek)?;
+        if let TknType::Identifier(ident) = self.get_token_at(peek) {
+            name = ident.clone();
+            peek += 1;
+        } else {
+            return None;
+        }
+
+        self.expect_token(TknType::OpenCurlyBrace, &mut peek)?;
+
+        let body_tokens;
+        let start = peek; 
+        let end;
+        loop {
+            if self.get_token_at(peek) == &TknType::CloseCurlyBrace {
+                end = peek - 1;
+                peek += 1;
+                body_tokens = &self.tokens[start..=end];
+                *index += peek;
+                return Some((name, body_tokens));
+            }
+            peek += 1;
+        }
     }
 
-    pub fn define_struct(&mut self) -> Option<(String, &[Tkn])> {
-        todo!();
-    }
-
-    pub fn define_function(&mut self) -> Option<(String, usize, usize, &[Tkn])> {
-        let mut peek = self.index;
-        
-        todo!();
-    }
-
-    pub fn parse_function(&mut self) -> Option<Fn> {
-        let mut peek = self.index;
-        let accessibility: String = match &self.tokens[self.index].token {
+    pub fn define_struct(&self, index: &mut usize) -> Option<(String, String, &[Tkn])> {
+        let mut peek = *index;
+        let accessibility: String = match &self.tokens[peek].token {
             TknType::Keyword(Kwrd::Public) => {
                 peek += 1;
                 String::from("public")
@@ -70,6 +104,60 @@ impl<'p> Parser<'p> {
                 String::from("package")
             },
             TknType::Identifier(ident) => {
+                peek += 1;
+                ident.clone()
+            },
+            TknType::Keyword(Kwrd::Struct) => String::from("private"),
+            _ => {
+                return None;
+            }
+        };
+
+        self.expect_token(TknType::Keyword(Kwrd::Struct), &mut peek)?;
+        let name;
+        if let TknType::Identifier(ident) = self.get_token_at(peek) {
+            name = ident.clone();
+            peek += 1;
+        } else {
+            return None;
+        }
+
+        self.expect_token(TknType::OpenCurlyBrace, &mut peek)?;
+        let body_tokens: &[Tkn];
+        let start = peek;
+        let end;
+        loop {
+            if self.get_token_at(peek) == &TknType::CloseCurlyBrace {
+                end = peek - 1;
+                peek += 1;
+                body_tokens = &self.tokens[start..=end];
+                *index = peek;
+                return Some((accessibility, name, body_tokens));
+            } else if self.get_token_at(peek) == &TknType::EndOfFile {
+                dbg!("fuck");
+                return None;
+            }
+            peek += 1;
+        }
+    }
+
+    pub fn define_function(&self, index: &mut usize) -> Option<(String, String, bool, bool, &[Tkn], &[Tkn])> {
+        let mut peek = *index;
+        let accessibility: String = match &self.tokens[peek].token {
+            TknType::Keyword(Kwrd::Public) => {
+                peek += 1;
+                String::from("public")
+            },
+            TknType::Keyword(Kwrd::Private) => {
+                peek += 1;
+                String::from("private")
+            },
+            TknType::Keyword(Kwrd::Package) => {
+                peek += 1;
+                String::from("package")
+            },
+            TknType::Identifier(ident) => {
+                peek += 1;
                 ident.clone()
             },
             TknType::Keyword(Kwrd::Mutable) 
@@ -78,51 +166,102 @@ impl<'p> Parser<'p> {
             _ => return None
         };
 
+
         let mutable = self.is_expected_token(TknType::Keyword(Kwrd::Mutable), &mut peek);
         let recursive = self.is_expected_token(TknType::Keyword(Kwrd::Recursive), &mut peek);
+        
         let name;
-
         self.expect_token(TknType::Keyword(Kwrd::Function), &mut peek)?;
-        if let TknType::Identifier(ident) = self.get_token() {
+        if let TknType::Identifier(ident) = self.get_token_at(peek) {
+            peek += 1;
             name = ident.clone();
         } else {
             return None;
         }
 
-        let arguments: &[FnParam] = &[];
-        let stmt: Stmt;
-        match self.get_token() {
-            TknType::OpenParen => todo!(),
-            TknType::Dollar => todo!(),
-            TknType::Colon => todo!(),
-            TknType::OpenCurlyBrace => {
+        let argument_tokens: &[Tkn];
+        let body_tokens: &[Tkn];
+        let mut start = peek; 
+        let mut end;
+        loop {
+            if self.get_token_at(peek) == &TknType::Semicolon {
+                end = peek - 1;
+                argument_tokens = &self.tokens[start..=end];
+                body_tokens = &self.tokens[peek..=peek];
+                *index = peek + 1;
+                return Some((accessibility, name, mutable, recursive, argument_tokens, body_tokens));
+            } else if self.get_token_at(peek) == &TknType::OpenCurlyBrace {
+                end = peek - 1;
+                argument_tokens = &self.tokens[start..=end];
+                start = peek + 1;
                 peek += 1;
-                let mut stmts = vec![];
-                while let Some(stmt) = self.parse_statement() {
-                    stmts.push(stmt);
+                break;
+            } else if self.get_token_at(peek) == &TknType::Operation(Op::Arrow) {
+                end = peek;
+                argument_tokens = &self.tokens[start..=end];
+                if self.get_token_at(peek + 1) == &TknType::OpenCurlyBrace {
+                    start = peek + 2;
+                    peek += 2;
+                    break;
                 }
-                self.expect_token(TknType::CloseCurlyBrace, &mut peek)?;
-                stmt = Stmt::Compound(stmts);
-            },
-            TknType::Operation(Op::Arrow) => {
+                start = peek + 1;
                 peek += 1;
-                stmt = self.parse_compound_statement()?;
-            },
-            TknType::NewLine => todo!(),
-            _ => return None
+                loop {
+                    if self.get_token_at(peek) == &TknType::Semicolon {
+                        end = peek - 1;
+                        body_tokens = &self.tokens[start..=end];
+                        *index = peek + 1;
+                        return Some((accessibility, name, mutable, recursive, argument_tokens, body_tokens));
+                    }
+                    peek += 1;
+                }
+            }
+            peek += 1;
+        }
+        let mut count = 0;
+        loop {
+            if self.get_token_at(peek) == &TknType::OpenCurlyBrace {
+                count += 1;
+            } else if self.get_token_at(peek) == &TknType::CloseCurlyBrace {
+                if count != 0 {
+                    count -= 1;
+                } else {
+                    end = peek - 1;
+                    body_tokens = &self.tokens[start..=end];
+                    *index = peek + 1;
+                    return Some((accessibility, name, mutable, recursive, argument_tokens, body_tokens));
+                }
+            }
+            peek += 1;
+        }
+    }
+
+    fn define_arguments(&self, index: &mut usize) -> Result<Vec<FnParam>, (&Tkn, String)> {
+        //expect either ( or $ or prefix
+        //if prefix, expect either ( or $
+        let mut open = false;
+        let mut peek = *index;
+        let mut fn_type: FnType;
+        let mut fn_param: FnParam;
+        let mut fn_params: Vec<FnParam> = vec![];
+
+        if self.get_token_at(peek) == &TknType::OpenParen {
+            
+        } else if self.get_token_at(peek) == &TknType::Dollar {
+
+        } else if self.get_token_at(peek) == &TknType::Colon {
+            
+        } else if self.get_token_at(peek) == &TknType::OpenCurlyBrace {
+            
+        } else {
+            
         }
 
-        let location = String::from(self.location);
-        
-        return Some(Fn {
-            location: location,
-            accessibility: accessibility,
-            mutable: mutable,
-            recursive: recursive,
-            name: name,
-            arguments: arguments,
-            body: stmt
-        });
+        todo!();
+    }
+
+    pub fn parse_function(&mut self) -> Option<Fn> {
+        todo!();
     }
 
     fn parse_accessor(&self) {
@@ -203,19 +342,12 @@ impl<'p> Parser<'p> {
             }
         }
 
-        let token_index = peek;
-        if let Ok(expr) = self.parse_expression(&mut peek, 0) {
-            let mut stmts: Vec<Stmt> = vec![];
-            for i in 0..idents.len() {
-                stmts.push(Stmt::Assign(Expr::Identifier(idents[i].clone()), expr.clone()));
-            }
-            return Ok(stmts);
+        let expr = self.parse_expression(&mut peek, 0)?;
+        let mut stmts: Vec<Stmt> = vec![];
+        for i in 0..idents.len() {
+            stmts.push(Stmt::Assign(Expr::Identifier(idents[i].clone()), expr.clone()));
         }
-
-        return Err((
-            &self.tokens[token_index], 
-            "".to_string()
-        ));
+        return Ok(stmts);
     }
 
     fn parse_variable_insertion(&self, index: usize) -> Option<Stmt> {
@@ -236,12 +368,22 @@ impl<'p> Parser<'p> {
         let mut peek = *index;
         let mut left_expr = self.parse_atom(&mut peek)?;
         loop {
-            let operator = self.get_token_at(peek);
+            let mut operator = self.get_token_at(peek);
 
-            if !OPERATOR_INFO_MAP.contains_key(operator) {
-                break;
+            if let TknType::Either(left, right) = operator {
+                if OPERATOR_INFO_MAP.contains_key(*left) {
+                    operator = *left;
+                } else if OPERATOR_INFO_MAP.contains_key(*right) {
+                    operator = *right;
+                } else {
+                    break;
+                }
+            } else {
+                if !OPERATOR_INFO_MAP.contains_key(operator) {
+                    break;
+                }
             }
-
+            
             let (prec, assoc) = OPERATOR_INFO_MAP[operator];
             let prec = prec as u32;
 

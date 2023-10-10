@@ -1,1 +1,21 @@
-2 + 3 ** 2 * 3 + 4 >= 50 || true;
+pub fn Main {
+    @test Int a = Int { value: 3 };
+    @test Int b = Int { value: 2 };
+    @test Int c = a Add b;
+}
+
+pub fn Add $ Int a $ infix $ Int b : Int {
+    return Int { value: a.value + b.value };
+}
+
+pub fn GetThree : i32 { return 3; }
+
+pub struct Int {
+    i32 value;
+}
+
+accessor @test {
+    blacklist {
+
+    }
+}

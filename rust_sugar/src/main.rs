@@ -23,10 +23,11 @@ fn main() {
     dbg!(&tokens);
 
     let mut parser = parser::Parser::new(&file_path, tokens);
+    parser.parse();
 
-    let expr = parser.parse_expression(&mut 0, 1).unwrap();
-    dbg!(&expr);
-    dbg!(eval(expr));
+    //let expr = parser.parse_expression(&mut 0, 1).unwrap();
+    //dbg!(&expr);
+    //dbg!(eval(expr));
 
 }
 
@@ -165,20 +166,26 @@ fn eval(expr: Expr) -> Expr {
         }
         return Expr::BinaryOp(op, Box::new(left_expr), Box::new(right_expr));
     } else if let Expr::UnaryOp(op, value) = expr {
+        let expr = eval(*value);
         match op {
             UnOp::Plus => {
-                if let Expr::Literal(Lit::IntegerLiteral(num)) = *value {
+                if let Expr::Literal(Lit::IntegerLiteral(num)) = expr {
                     return Expr::Literal(Lit::IntegerLiteral(num));
                 }
             },
             UnOp::Minus => {
-                if let Expr::Literal(Lit::IntegerLiteral(num)) = *value {
+                if let Expr::Literal(Lit::IntegerLiteral(num)) = expr {
                     return Expr::Literal(Lit::IntegerLiteral(-num));
                 }
             },
+            UnOp::LogicNot => {
+                if let Expr::Literal(Lit::BooleanLiteral(b)) = expr {
+                    return Expr::Literal(Lit::BooleanLiteral(!b));
+                }
+            }
             _ => todo!("{:?} not implemented yet", op)
         }
-        return Expr::UnaryOp(op, Box::new(*value));
+        return Expr::UnaryOp(op, Box::new(expr));
     } else if let Expr::Literal(Lit::IntegerLiteral(int)) = expr {
         return Expr::Literal(Lit::IntegerLiteral(int));
     } else if let Expr::Literal(Lit::BooleanLiteral(b)) = expr {
