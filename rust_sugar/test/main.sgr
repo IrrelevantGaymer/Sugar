@@ -1,21 +1,8 @@
-pub fn Main {
-    @test Int a = Int { value: 3 };
-    @test Int b = Int { value: 2 };
-    @test Int c = a Add b;
+pub struct Titty {
+    pub i32 test,
+    prv bool test2,
 }
 
-pub fn Add $ Int a $ infix $ Int b : Int {
-    return Int { value: a.value + b.value };
-}
-
-pub fn GetThree : i32 { return 3; }
-
-pub struct Int {
-    i32 value;
-}
-
-accessor @test {
-    blacklist {
-
-    }
+pub fn Add $ i32 a i32 b : i32 {
+    return a + b;
 }

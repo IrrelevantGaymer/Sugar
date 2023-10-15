@@ -1,0 +1,15 @@
+defined accessors:
+[]
+
+defined structs:
+[("public", "Titty", [Token { token: NewLine, file_name: "test/main.sgr", line_index: 19, line_number: 1 }, Token { token: Identifier("\tpub"), file_name: "test/main.sgr", line_index: 1, line_number: 2 }, Token { token: Type(Integer(32)), file_name: "test/main.sgr", line_index: 6, line_number: 2 }, Token { token: Identifier("waist,"), file_name: "test/main.sgr", line_index: 10, line_number: 2 }, Token { token: NewLine, file_name: "test/main.sgr", line_index: 16, line_number: 2 }, Token { token: Identifier("\tpub"), file_name: "test/main.sgr", line_index: 1, line_number: 3 }, Token { token: Type(Character), file_name: "test/main.sgr", line_index: 6, line_number: 3 }, Token { token: Identifier("letter,"), file_name: "test/main.sgr", line_index: 11, line_number: 3 }, Token { token: NewLine, file_name: "test/main.sgr", line_index: 18, line_number: 3 }, Token { token: Identifier("\tprv"), file_name: "test/main.sgr", line_index: 1, line_number: 4 }, Token { token: Type(Boolean), file_name: "test/main.sgr", line_index: 6, line_number: 4 }, Token { token: Identifier("yes,"), file_name: "test/main.sgr", line_index: 11, line_number: 4 }, Token { token: NewLine, file_name: "test/main.sgr", line_index: 15, line_number: 4 }, Token { token: CloseCurlyBrace, file_name: "test/main.sgr", line_index: 1, line_number: 5 }])]
+
+defined functions:
+[]
+
+function definitions:
+[]
+
+function declarations:
+[]
+

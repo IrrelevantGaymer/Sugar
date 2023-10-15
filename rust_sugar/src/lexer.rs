@@ -1,7 +1,7 @@
 use crate::string_utils::StringUtils;
 use crate::token::{Kwrd, Op, Type, Tkn, TknType};
 
-const SINGLE_TOKEN_CHARACTERS: &str = "(){}[];?.";
+const SINGLE_TOKEN_CHARACTERS: &str = "(){}[];?.,";
 const OPERATOR_CHARACTERS: &str = "+-*/%&|^=!~:<>";
 const OPERATORS: &[&str] = &[
     "!..=", "!..", "..=", "..",

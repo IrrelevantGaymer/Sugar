@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 
 use crate::token;
-use crate::token::{TknType};
+use crate::token::TknType;
 
 use std::collections::HashMap;
 
@@ -27,8 +27,7 @@ pub enum Expression<'e> {
     Conditional(&'e Expr<'e>, &'e Expr<'e>, &'e Expr<'e>),
     Functional(String, Vec<Expr<'e>>),
     BinaryOp(BinOp, Box<Expr<'e>>, Box<Expr<'e>>),
-    UnaryOp(UnOp, Box<Expr<'e>>)
-
+    UnaryOp(UnOp, Box<Expr<'e>>),
 }
 
 pub type Lit = Literal;
@@ -39,7 +38,7 @@ pub enum Literal {
     FloatLiteral(f64),
     CharLiteral(char),
     StringLiteral(String),
-    BooleanLiteral(bool)
+    BooleanLiteral(bool),
 }
 
 pub type UnOp = UnaryOperator;
@@ -57,33 +56,33 @@ pub type BinOp = BinaryOperator;
 #[derive(Clone, Debug, PartialEq)]
 pub enum BinaryOperator {
     BangRangeEquals, // !..=
-    BangRange, // !..
-    RangeEquals, // ..=
-    Range, // ..
+    BangRange,       // !..
+    RangeEquals,     // ..=
+    Range,           // ..
 
-    Equals, // ==
-    NotEquals, // !=
-    LessThanEqualTo, // <=
+    Equals,             // ==
+    NotEquals,          // !=
+    LessThanEqualTo,    // <=
     GreaterThanEqualTo, // >=
-    LessThan, // <
-    GreaterThan, // >
+    LessThan,           // <
+    GreaterThan,        // >
 
-    PlusPlus, // ++
-    Plus, // +
-    MinusMinus, // --
-    Minus, // -
-    Exponent, // **
-    Multiply, // *
-    IntDivide, // //
-    FloatDivide, // /
-    Modulo, // %
-    LogicAnd, // &&
-    LogicOr, // ||
-    LogicXor, // ^^
-    BitwiseAnd, // &
-    BitwiseOr, // |
-    BitwiseXor, // ^
-    BitwiseShiftLeft, // <<
+    PlusPlus,          // ++
+    Plus,              // +
+    MinusMinus,        // --
+    Minus,             // -
+    Exponent,          // **
+    Multiply,          // *
+    IntDivide,         // //
+    FloatDivide,       // /
+    Modulo,            // %
+    LogicAnd,          // &&
+    LogicOr,           // ||
+    LogicXor,          // ^^
+    BitwiseAnd,        // &
+    BitwiseOr,         // |
+    BitwiseXor,        // ^
+    BitwiseShiftLeft,  // <<
     BitwiseShiftRight, // >>
 }
 
@@ -116,44 +115,125 @@ impl BinOp {
             TknType::Operation(token::Op::RangeEquals) => BinOp::RangeEquals,
             TknType::Operation(token::Op::Range) => BinOp::Range,
             TknType::Operation(token::Op::PlusPlus) => BinOp::PlusPlus,
-            _ => panic!("Invalid TokenType, expecting applicable Operation")
-        }
+            _ => panic!("Invalid TokenType, expecting applicable Operation"),
+        };
     }
 }
 
 pub type OpInfo<'o> = OperatorInfo<'o>;
 pub struct OperatorInfo<'o> {
-    token: TknType<'o>
+    token: TknType<'o>,
 }
 
-pub static OPERATOR_INFO_MAP: Lazy<HashMap<TknType, (OpPrec, OpAssoc)>> = Lazy::<HashMap<TknType, (OpPrec, OpAssoc)>>::new(|| HashMap::from([
-    (TknType::Operation(token::Op::Exponent), (OpPrec::Exponent, OpAssoc::Right)),
-    (TknType::Operation(token::Op::Multiply), (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left)),
-    (TknType::Operation(token::Op::FloatDivide), (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left)),
-    (TknType::Operation(token::Op::IntDivide), (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left)),
-    (TknType::Operation(token::Op::Modulo), (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left)),
-    (TknType::Operation(token::Op::Plus), (OpPrec::AdditionSubtraction, OpAssoc::Left)),
-    (TknType::Operation(token::Op::Minus), (OpPrec::AdditionSubtraction, OpAssoc::Left)),
-    (TknType::Operation(token::Op::BitwiseShiftLeft), (OpPrec::BitwiseShift, OpAssoc::Left)),
-    (TknType::Operation(token::Op::BitwiseShiftRight), (OpPrec::BitwiseShift, OpAssoc::Left)),
-    (TknType::Operation(token::Op::BitwiseAnd), (OpPrec::BitwiseAnd, OpAssoc::Left)),
-    (TknType::Operation(token::Op::BitwiseXor), (OpPrec::BitwiseXor, OpAssoc::Left)),
-    (TknType::Operation(token::Op::BitwiseOr), (OpPrec::BitwiseOr, OpAssoc::Left)),
-    (TknType::Operation(token::Op::Equals), (OpPrec::Relational, OpAssoc::Left)),
-    (TknType::Operation(token::Op::NotEquals), (OpPrec::Relational, OpAssoc::Left)),
-    (TknType::Operation(token::Op::LessThan), (OpPrec::Relational, OpAssoc::Left)),
-    (TknType::Operation(token::Op::GreaterThan), (OpPrec::Relational, OpAssoc::Left)),
-    (TknType::Operation(token::Op::LessThanEqualTo), (OpPrec::Relational, OpAssoc::Left)),
-    (TknType::Operation(token::Op::GreaterThanEqualTo), (OpPrec::Relational, OpAssoc::Left)),
-    (TknType::Operation(token::Op::LogicAnd), (OpPrec::LogicAnd, OpAssoc::Left)),
-    (TknType::Operation(token::Op::LogicXor), (OpPrec::LogicXor, OpAssoc::Left)),
-    (TknType::Operation(token::Op::LogicOr), (OpPrec::LogicOr, OpAssoc::Left)),
-    (TknType::Operation(token::Op::BangRangeEquals), (OpPrec::Ranges, OpAssoc::Left)),     
-    (TknType::Operation(token::Op::BangRange), (OpPrec::Ranges, OpAssoc::Left)),
-    (TknType::Operation(token::Op::RangeEquals), (OpPrec::Ranges, OpAssoc::Left)),
-    (TknType::Operation(token::Op::Range), (OpPrec::Ranges, OpAssoc::Left)),
-    (TknType::Operation(token::Op::PlusPlus), (OpPrec::Concatenation, OpAssoc::Left))
-]));
+pub static OPERATOR_INFO_MAP: Lazy<HashMap<TknType, (OpPrec, OpAssoc)>> =
+    Lazy::<HashMap<TknType, (OpPrec, OpAssoc)>>::new(|| {
+        HashMap::from([
+            (
+                TknType::Operation(token::Op::Exponent),
+                (OpPrec::Exponent, OpAssoc::Right),
+            ),
+            (
+                TknType::Operation(token::Op::Multiply),
+                (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::FloatDivide),
+                (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::IntDivide),
+                (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::Modulo),
+                (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::Plus),
+                (OpPrec::AdditionSubtraction, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::Minus),
+                (OpPrec::AdditionSubtraction, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::BitwiseShiftLeft),
+                (OpPrec::BitwiseShift, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::BitwiseShiftRight),
+                (OpPrec::BitwiseShift, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::BitwiseAnd),
+                (OpPrec::BitwiseAnd, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::BitwiseXor),
+                (OpPrec::BitwiseXor, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::BitwiseOr),
+                (OpPrec::BitwiseOr, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::Equals),
+                (OpPrec::Relational, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::NotEquals),
+                (OpPrec::Relational, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::LessThan),
+                (OpPrec::Relational, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::GreaterThan),
+                (OpPrec::Relational, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::LessThanEqualTo),
+                (OpPrec::Relational, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::GreaterThanEqualTo),
+                (OpPrec::Relational, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::LogicAnd),
+                (OpPrec::LogicAnd, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::LogicXor),
+                (OpPrec::LogicXor, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::LogicOr),
+                (OpPrec::LogicOr, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::BangRangeEquals),
+                (OpPrec::Ranges, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::BangRange),
+                (OpPrec::Ranges, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::RangeEquals),
+                (OpPrec::Ranges, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::Range),
+                (OpPrec::Ranges, OpAssoc::Left),
+            ),
+            (
+                TknType::Operation(token::Op::PlusPlus),
+                (OpPrec::Concatenation, OpAssoc::Left),
+            ),
+        ])
+    });
 
 pub type OpPrec = OperatorPrecedence;
 #[derive(Clone, Copy)]
@@ -177,7 +257,23 @@ pub enum OperatorPrecedence {
 pub type OpAssoc = OperatorAssociativity;
 #[derive(Clone, Copy, PartialEq)]
 pub enum OperatorAssociativity {
-    Left, Right
+    Left,
+    Right,
+}
+
+#[derive(Clone, Debug)]
+pub struct Field {
+    pub accessibility: String,
+    pub field_type: String,
+    pub field_name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct Struct {
+    pub accessibility: String,
+    pub location: String,
+    pub name: String,
+    pub fields: Vec<Field>,
 }
 
 pub type Fn<'f> = Function<'f>;
@@ -190,14 +286,23 @@ pub struct Function<'f> {
     pub name: String,
     pub arguments: &'f [FnParam<'f>],
     pub return_type: String,
-    pub body: Stmt<'f>
+    pub body: Stmt<'f>,
 }
 
 pub type FnParam<'fp> = FunctionParamater<'fp>;
 #[derive(Clone, Debug)]
 pub struct FunctionParamater<'fp> {
-    param_type: String,
-    param_name: Option<String>,
-    param_default: Option<Expr<'fp>>
+    pub param_type: Option<String>,
+    pub param_name: Option<String>,
+    pub param_default: Option<Expr<'fp>>,
 }
 
+impl<'fp> FunctionParamater<'fp> {
+    pub fn default() -> FunctionParamater<'fp> {
+        return FunctionParamater {
+            param_type: None,
+            param_name: None,
+            param_default: None,
+        };
+    }
+}

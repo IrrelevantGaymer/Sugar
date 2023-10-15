@@ -124,6 +124,7 @@ impl<'t> PartialEq for TknType<'t> {
             (TknType::ColonColon,TknType::ColonColon) => true,
             (TknType::Colon,TknType::Colon) => true,
             (TknType::Dot,TknType::Dot) => true,
+            (TknType::Comma,TknType::Comma) => true,
             (TknType::Borrow,TknType::Borrow) => true,
             (TknType::EndOfFile,TknType::EndOfFile) => true,
             (TknType::Invalid,TknType::Invalid) => true,
