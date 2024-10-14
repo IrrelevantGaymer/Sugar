@@ -1,0 +1,25 @@
+{
+  "name": "sugar",
+  "displayName": "$ugar VS Code Extension",
+  "description": "Syntax Highlighting for $ugar",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "sugar",
+      "aliases": ["$ugar", "sugar"],
+      "extensions": [".sgr"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "sugar",
+      "scopeName": "source.sgr",
+      "path": "./syntaxes/sugar.tmLanguage.json"
+    }]
+  }
+}

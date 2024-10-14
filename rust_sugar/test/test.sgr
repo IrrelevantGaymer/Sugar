@@ -1,0 +1,18 @@
+## this function will error because the compiler needs to know how long the output reference will live
+## you need to define lifetimes, so that the compiler knows the lifetime of the output 
+## relative to the inputs
+
+pub fn compare_titty $ &Titty left $ infix $ &Titty right : &Titty {
+    if left.value > right.value {
+        return left;
+    }
+    return right;
+}
+
+## This is the correct version
+pub fn compare_titty_with_lifetimes<'a> $ &'a Titty left $ infix $ &'a Titty right : &'a Titty {
+    if left.value > right.value {
+        return left;
+    }
+    return right;
+}

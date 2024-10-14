@@ -1,0 +1,179 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "sugar",
+	"patterns": [
+		{
+			"include": "#keywords"
+		},
+		{
+			"include": "#operators"
+		},
+		{
+			"include": "#strings"
+		},
+		{
+			"include": "#line_comments"
+		},
+		{
+			"include": "#block_comments"
+		},
+		{
+			"include": "#variables"
+		},
+		{
+			"include": "#constants"
+		},
+		{
+			"include": "#types"
+		},
+		{
+			"include": "#functions"
+		},
+		{
+			"include": "#fn_fix"
+		}
+	],
+	"repository": {
+		"keywords": {
+			"patterns": [
+				{
+					"name": "keyword.control.sugar",
+					"match": "\\b(if|while|for|return)\\b"
+				},
+				{
+					"name": "keyword.other.accessor.sugar",
+					"match": "\\b(pub|prv|pkg)\\b"
+				}
+			]
+		},
+		"operators": {
+			"patterns": [
+				{
+					"name": "keyword.operator.comparison.sugar",
+					"match": "(&&|\\|\\||==|!=)"
+				},
+				{
+					"name": "keyword.operator.assignment.sugar",
+					"match": "(\\+=|-=|/=|\\*=|%=|\\^=|&=|\\|=|<<=|>>=|=)"
+				},
+				{
+					"name": "keyword.operator.arithmetic.sugar",
+					"match": "(\\+|-|\\*|/|%|&|\\||\\^|<<|>>)"
+				},
+				{
+					"name": "keyword.operator.comparison.sugar",
+					"match": "(<=|>=|<|>)"
+				}
+			]
+		},
+		"strings": {
+			"name": "string.quoted.double.sugar",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.sugar",
+					"match": "\\\\."
+				}
+			]
+		},
+		"line_comments": {
+			"patterns": [{
+				"name": "comment.line.double-dash.sugar",
+				"begin": "##",
+				"end": "\n"
+			}]
+		},
+		"block_comments": {
+			"patterns": [{
+				"name":"comment.block.sugar",
+				"begin": "#[,]",
+				"end": "[,](#)",
+				"patterns": [{
+					"include": "#block_comments"
+				}]
+			}]
+		},
+		"variables": {
+			"patterns": [
+				{
+					"name": "variable.language.sugar"	,
+					"match": "\\b(?i)(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|f32|f64|char|bool|let)\\b"
+				}
+			]
+		},
+		"constants": {
+			"patterns": [
+				{
+				"name": "constant.character",
+				"match": "(<|>|=|!)"
+				},
+				{
+				"name": "constant.language",
+				"match": "\\b(?i)(true|false)\\b"
+				},
+				{
+				"name": "constant.numeric",
+				"match": "[0-9]"
+				}
+			]
+		},
+		"types": {
+			"patterns": [
+				{
+					"comment": "Type declaration",
+					"begin": "\\b(enum|struct|trait|union)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+					"end": "[\\{\\(;]",
+					"beginCaptures": {
+						"1": {
+							"name": "storage.type.sugar"
+						},
+						"2": {
+							"name": "entity.name.type.sugar"
+						}
+					},
+					"patterns": [
+						{
+							"include": "#block_comments"
+						},
+						{
+							"include": "#line_comments"
+						}
+					]
+				}
+			]
+		},
+		"functions": {
+			"patterns": [
+				{
+					"comment": "Function definition",
+					"begin": "\\b(fn)\\s+([A-Za-z][A-Za-z0-9_]*|_[A-Za-z0-9_]+)",
+					"end": "[\\{;]",
+					"beginCaptures": {
+						"1": {
+							"name": "keyword.other.fn.rust"
+						},
+						"2": {
+							"name": "entity.name.function.rust"
+						}
+					},
+					"patterns": [
+						{
+							"include": "#fn_fix"
+						},
+						{
+							"include": "#variables"
+						}
+					]
+				}
+			]
+		},
+		"fn_fix": {
+			"patterns": [{
+				"name": "keyword.other.fn_fix.sugar",
+				"match": "\\b(prefix|infix|postfix)\\b"
+			}]
+		}
+	},
+	"scopeName": "source.sgr"
+}
