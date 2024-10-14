@@ -42,7 +42,7 @@ Every Sugar Program must have an entry point.  The entry point is always the fun
 
 ```
 fn main {
-     \#\# do stuff
+     ## do stuff
 }
 ```
 
@@ -115,7 +115,7 @@ Vector3 v = Vector3::new -1 2 -1;
 Vector3 w = u +` v;
 ```
 
-I am currently looking into possible alternative symbols instead of `.  I like the look of *, however that runs into issues with just normal multiplication * and exponentiation ** becoming **, *** respectively which would be very confusing.*
+I am currently looking into possible alternative symbols instead of `.  I like the look of \*, however that runs into issues with just normal multiplication \* and exponentiation \*\* becoming \*\*, \*\*\* respectively which would be very confusing.*
 
 ## Dollar Operator
 
@@ -185,7 +185,7 @@ Because // is an operator, the comment sigil must be something different.  Singl
  ,  ,\#
  ,\#
 
-*note: once operators are overhauled, comments will be // and /, ,/.  Commas are easier to type than *.*
+*note: once operators are overhauled, comments will be // and /, ,/.  Commas are easier to type than \*.*
 
 ## Features to be implemented
 
