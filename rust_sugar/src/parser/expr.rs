@@ -1,146 +1,139 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Display};
+use std::{cell::{Ref, RefCell}, collections::HashMap, fmt::Display};
 
 use stack_frame_allocators::stack_frame_dict_allocator::StackFrameDictAllocator;
 
 use crate::{lexer::token::{Kwrd, Op, Tkn, TknType}, parser::tokens};
 
-use super::{functions::FullFunctionDefinition, operators::{BinOp, OpAssoc, UnOp, OPERATOR_INFO_MAP}, stmt::Stmt, tokens::{expect_token, is_expected_token}, ExprBump, ParserError};
+use super::{functions::{BuiltInFunction, FullFnDef}, operators::{BinOp, OpAssoc, UnOp, OPERATOR_INFO_MAP}, stmt::StmtData, structs::{Field, Struct}, tokens::{expect_token, is_expected_token}, ExprBump, ParserError};
 
-pub type Expr<'e, 't> = Expression<'e, 't>;
+pub type Expr<'bumps, 'defs> = Expression<'bumps, 'defs>;
 #[derive(Clone, Debug)]
-pub struct Expression<'e, 't> {
-    pub expr_data: &'e ExprData<'e>,
-    pub expr_type: ExprTypeCons<'t>,
+pub struct Expression<'bumps, 'defs> {
+    pub line: usize,
+    pub expr_data: &'bumps ExprData<'bumps, 'defs>,
+    pub expr_type: ExprTypeCons<'bumps>
 }
 
-impl<'e, 't> Expression<'e, 't> {
-    pub fn map(mut self, expr_bump: &'e ExprBump, f: impl FnOnce(&'e ExprData<'e>) -> ExprData<'e>) -> Self {
-        self.expr_data = expr_bump.alloc(f(self.expr_data));
-        self
-    }
-}
+pub type ExprData<'bumps, 'defs> = ExpressionData<'bumps, 'defs>;
 
-pub type ExprData<'ed> = ExpressionData<'ed>;
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ExpressionData<'ed> {
+#[derive(Clone, Debug)]
+pub enum ExpressionData<'bumps, 'defs> {
     Identifier(String),
     Literal(Lit),
+    Custom {
+        fields: HashMap<&'defs str, &'bumps ExprData<'bumps, 'defs>>
+    },
+    AnonymousCustom {
+        fields: Box<[(String, &'bumps ExprData<'bumps, 'defs>)]>
+    },
+    CustomField {
+        data: &'bumps Expr<'bumps, 'defs>,
+        field: &'defs Field
+    },
+    AnonymousCustomField {
+        data: &'bumps Expr<'bumps, 'defs>,
+        field_name: String
+    },
     Conditional{ 
-        conds: Vec<&'ed ExprData<'ed>>, 
-        bodies: Vec<&'ed Stmt<'ed>> 
+        conds: Vec<Expr<'bumps, 'defs>>, 
+        bodies: Vec<&'bumps StmtData<'bumps, 'defs>> 
     },
     Function {
         name: String,
-        left_args: Vec<&'ed ExprData<'ed>>,
-        right_args: Vec<&'ed ExprData<'ed>>
+        left_args: Vec<Expr<'bumps, 'defs>>,
+        right_args: Vec<Expr<'bumps, 'defs>>
     },
-    BinaryOp(BinOp, &'ed ExprData<'ed>, &'ed ExprData<'ed>),
-    UnaryOp(UnOp, &'ed ExprData<'ed>),
-    Array(Vec<&'ed ExprData<'ed>>),
-    AmbiguousArray(&'ed ExprData<'ed>)
+    BinaryOp(BinOp, Expr<'bumps, 'defs>, Expr<'bumps, 'defs>),
+    UnaryOp(UnOp, Expr<'bumps, 'defs>),
+    Array(Vec<Expr<'bumps, 'defs>>),
+    Index { 
+        expr: Expr<'bumps, 'defs>,
+        index: Expr<'bumps, 'defs>
+    },
+    Tuple(Vec<Expr<'bumps, 'defs>>),
+    AmbiguousGroup(Expr<'bumps, 'defs>)
 }
 
-pub type ExprTypeCons<'etp> = ExpressionTypeContainer<'etp>;
+pub type ExprTypeCons<'bumps> = ExpressionTypeContainer<'bumps>;
 #[derive(Clone, Debug)]
-pub enum ExpressionTypeContainer<'etp> {
-    Stored(&'etp RefCell<ExprType>, Vec<&'etp RefCell<ExprType>>),
-    Temp(RefCell<ExprType>)
+pub struct ExpressionTypeContainer<'bumps> {
+    stored: Vec<&'bumps RefCell<ExprType>>
 }
 
-impl<'etp> ExpressionTypeContainer<'etp> {
-    pub fn new_temp(temp: ExprType) -> Self {
-        ExprTypeCons::Temp(RefCell::new(temp))
+impl<'bumps> ExprTypeCons<'bumps> {
+    pub fn new(expr_bump: &ExprBump, expr_type: ExprType) -> ExprTypeCons {
+        ExpressionTypeContainer { 
+            stored: vec![
+                expr_bump.alloc(RefCell::new(expr_type))
+            ] 
+        }
     }
 
-    pub fn new_stored<'tkn, 'et, 'i>(
-        tokens: &'tkn [Tkn<'tkn>],
-        peek: &usize,
+    pub fn new_stored(expr_type: &RefCell<ExprType>) -> ExprTypeCons {
+        ExpressionTypeContainer { 
+            stored: vec![expr_type] 
+        }
+    }
+    
+    pub fn grab_variable_type<'tkns, 'defs>(
+        tokens: &'tkns [Tkn],
+        peek: usize,
         ident: &str, 
-        variables: &'et StackFrameDictAllocator<'i, String, VariableData<'i>>, 
-    ) -> Result<ExprTypeCons<'et>, ParserError<'tkn>> {
-        //println!("finding type of {ident} at {}", &tokens[*peek]);
-        //variables.print();
-        return Ok(variables.get_in_stack(ident).ok_or(ParserError::new(
-            &tokens[*peek],
-            "Identifier does not exist"
-        ))?.get().expr_type.clone());
-
-        // Ok(ExprTypeCons::Stored(&variables.get(ident).ok_or(ParserError::new(
-        //     &tokens[*peek],
-        //     "Identifier does not exist"
-        // ))?.expr_type, vec![]))
+        variables: &StackFrameDictAllocator<'_, String, VariableData<'tkns, 'bumps>>, 
+    ) -> Result<ExprTypeCons<'bumps>, ParserError<'tkns, 'bumps, 'defs>> {
+        return Ok(variables.get_in_stack(ident).ok_or_else(|| ParserError::VariableDoesNotExist { 
+            tkn: &tokens[peek] 
+        })?.get().expr_type.clone());
     }
     
     pub fn clone_inner(&self) -> ExprType {
-        match self {
-            Self::Stored(ptr, _) => ptr.borrow().clone(),
-            Self::Temp(ref value) => value.borrow().clone()
+        unsafe {
+            self.stored.first().unwrap_unchecked().borrow().clone()
         }
     }
 
-    pub fn get(&self) -> &RefCell<ExprType> {
-        match self {
-            Self::Stored(ptr, _) => ptr,
-            Self::Temp(ref value) => value
+    pub fn get(&self) -> Ref<'_, ExprType> {
+        unsafe {
+            self.stored.first().unwrap_unchecked().borrow()
         }
     }
 
-    pub fn set(&mut self, expr_type: ExprType) {
-        match self {
-            Self::Stored(ptr, _) => *ptr.borrow_mut() = expr_type,
-            Self::Temp(_) => *self = Self::Temp(RefCell::new(expr_type))
-        };
-    }
+    fn combine(self, other: ExprTypeCons<'bumps>) -> ExprTypeCons<'bumps> {
+        let mut stored = vec![];
+        stored.extend(self.stored.into_iter());
+        stored.extend(other.stored.into_iter());
 
-    pub fn combine(self, other: ExprTypeCons<'etp>) -> ExprTypeCons<'etp> {
-        use ExprTypeCons as ETC;
-        match (self, other) {
-            (ETC::Temp(l), ETC::Temp(_)) => {
-                ETC::Temp(l)
-            },
-            (ETC::Stored(value, stored), ETC::Temp(_)) => {
-                ETC::Stored(value, stored)
-            },
-            (ETC::Temp(_), ETC::Stored(value, stored)) => {
-                ETC::Stored(value, stored)
-            },
-            (ETC::Stored(value, mut stored), ETC::Stored(other, ref mut append)) => {
-                stored.push(other);
-                stored.append(append);
-                ETC::Stored(value, stored)
-            }
+        return ExprTypeCons {
+            stored
         }
     }
 
-    pub fn match_type(mut self, mut other: ExprTypeCons<'etp>) -> Option<ExprTypeCons<'etp>> {
-        use ExprTypeCons as ETC;
-
-        match (&mut self, &mut other) {
-            (ETC::Temp(ref l), ETC::Temp(ref r)) => {
-                l.borrow_mut().match_type(&mut r.borrow_mut());
-                return Some(self);
-            },
-            (ETC::Stored(ref l, ref mut stored), ETC::Temp(ref r)) |
-            (ETC::Temp(ref r), ETC::Stored(ref l, ref mut stored)) => {
-                l.borrow_mut().match_type(&mut r.borrow_mut());
-                *stored = stored.into_iter().map::<&RefCell<_>, _>(|e| {
-                    *e.borrow_mut() = l.borrow().clone(); 
-                    e
-                }).collect();
-                return Some(other);
-            },
-            (ETC::Stored(ref l, ref mut stored), ETC::Stored(ref r, ref mut append)) => {
-                l.borrow_mut().match_type(&mut r.borrow_mut());
-                stored.push(r);
-                stored.append(append);
-                *stored = stored.into_iter().map::<&RefCell<_>, _>(|e| {
-                    *e.borrow_mut() = l.borrow().clone(); 
-                    e
-                }).collect();
-                return Some(self);
-            }
+    unsafe fn update(&self, expr_type: ExprType) {
+        for stored in &self.stored {
+            *stored.borrow_mut() = expr_type.clone()
         }
+    }
+
+    pub fn match_type(&mut self, other: &mut ExprTypeCons<'bumps>) -> Option<ExprTypeCons<'bumps>> {
+        let mut left = self.clone_inner();
+        let mut right = other.clone_inner();
+
+        if !left.match_type(&mut right) {
+            return None;
+        }
+
+        unsafe {
+            self.update(left);
+            other.update(right);
+        }
+
+        return Some(self.clone().combine(other.clone()));
+    }
+}
+
+impl<'etp> PartialEq for ExprTypeCons<'etp> {
+    fn eq(&self, other: &Self) -> bool {
+        return *self.get() == *other.get();
     }
 }
 
@@ -148,17 +141,19 @@ pub type ExprType = ExpressionType;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ExpressionType {
     AmbiguousType,
-    I8, I16, I32, I64, I128, AmbiguousNegInteger,
-    U8, U16, U32, U64, U128, AmbiguousPosInteger,
+    I8, I16, I32, I64, I128, ISize, AmbiguousNegInteger,
+    U8, U16, U32, U64, U128, USize, AmbiguousPosInteger,
     F32, F64, AmbiguousFloat,
     Char, StringLiteral, Bool,
     Ref(Box<ExprType>),
     MutRef(Box<ExprType>),
     Array {
-        length: usize, 
+        length: Option<usize>, 
         expr_type: Box<ExprType>
     },
-    Group (Vec<ExprType>),
+    //TODO separate into PatternGroup and PatternAmbiguousGroup, since actual Tuple types cannot use the DiscardMany type
+    Tuple { start: Vec<ExprType>, end: Vec<ExprType> },
+    AmbiguousGroup { start: Vec<ExprType>, end: Vec<ExprType> },
     Function {
         name: String,
         return_type: Box<ExprType>,
@@ -170,67 +165,339 @@ pub enum ExpressionType {
         left_args: Vec<ExprType>,
         right_args: Vec<ExprType>
     },
-    Discard,
-    DiscardRest,
+    DiscardSingle,
+    DiscardMany,
     Custom {
         ident: String
     },
-    Void
+    AnonymousCustom {
+        fields: Box<[(String, ExprType)]>
+    },
+    Void,
+    Never
 }
 
 impl ExprType {
     pub fn match_type(&mut self, other: &mut ExprType) -> bool {
         use ExprType as ET;
         
-        match (&self, &other) {
-            (ET::AmbiguousType, new_type) => *self = (**new_type).clone(),
-            (new_type, ET::AmbiguousType) => *other = (**new_type).clone(),
-            (ET::AmbiguousPosInteger, new_type @ (
-                ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 | 
-                ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128
-            )) => *self = (**new_type).clone(),
-            (new_type @ 
-                (
-                    ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 | 
-                    ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128
+        match (self, other) {
+            (_, ET::Never) => (),
+            (ET::Never, _) => (),
+            (l @ ET::AmbiguousType, new_type) => *l = (*new_type).clone(),
+            (new_type, r @ ET::AmbiguousType) => *r = (*new_type).clone(),
+            (ET::DiscardSingle, _) => return true,
+            (_, ET::DiscardSingle) => return true,
+            (l @ ET::AmbiguousPosInteger, new_type @ (
+                ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 | ET::ISize |
+                ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128 | ET::USize
+            )) => *l = (*new_type).clone(),
+            (
+                new_type @ (
+                    ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 | ET::ISize |
+                    ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128 | ET::USize
                 ),
-                ET::AmbiguousPosInteger, 
-            ) => *other = (**new_type).clone(),
-            (ET::AmbiguousNegInteger, 
-                new_type @ (ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128)
-            ) => *self = (**new_type).clone(),
-            (new_type @ (ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128),
-                ET::AmbiguousNegInteger, 
-            ) => *other = (**new_type).clone(),
-            (ET::AmbiguousFloat, new_type @ (ET::F32 | ET::F64)) => *self = (**new_type).clone(),
-            (new_type @ (ET::F32 | ET::F64), ET::AmbiguousFloat) => *other = (**new_type).clone(),
+                r @ ET::AmbiguousPosInteger, 
+            ) => *r = (*new_type).clone(),
+            (
+                l @ ET::AmbiguousNegInteger, 
+                new_type @ (ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 | ET::ISize)
+            ) => *l = (*new_type).clone(),
+            (
+                new_type @ (ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 | ET::ISize),
+                r @ ET::AmbiguousNegInteger, 
+            ) => *r = (*new_type).clone(),
+            (l @ ET::AmbiguousFloat, new_type @ (ET::F32 | ET::F64)) => *l = (*new_type).clone(),
+            (new_type @ (ET::F32 | ET::F64), r @ ET::AmbiguousFloat) => *r = (*new_type).clone(),
+            (
+                ET::AnonymousCustom { fields: l_fields },
+                ET::AnonymousCustom { fields: r_fields }
+            ) => {
+                if l_fields.len() != r_fields.len() {
+                    return false;
+                }
+
+                for (
+                    (l_field_name, l_field_type), 
+                    (r_field_name, r_field_type)
+                ) in l_fields.iter_mut().zip(r_fields) {
+                    if l_field_name != r_field_name {
+                        return false;
+                    }
+                    if !l_field_type.match_type(r_field_type) {
+                        return false;
+                    }
+                }
+            },
+            (
+                ET::Array {
+                    length: ref mut l_length, 
+                    expr_type: ref mut l_type
+                }, 
+                ET::Array {
+                    length: ref mut r_length, 
+                    expr_type: ref mut r_type
+                }
+            ) => {
+                if l_length.is_some() && r_length.is_some() {
+                    return unsafe { l_length.zip(*r_length).map(|(l, r)| l == r).unwrap_unchecked() };
+                } else if l_length.is_some() {
+                    *r_length = l_length.clone();
+                } else if r_length.is_some() {
+                    *l_length = r_length.clone();
+                }
+
+                return l_type.match_type(r_type.as_mut());
+            },
+            (
+                ET::Tuple { 
+                    start: ref mut l_start_types, 
+                    end: ref mut l_end_types 
+                }, 
+                ET::Tuple {
+                    start: ref mut r_types,
+                    end: r_end
+                }
+            ) if r_end.is_empty() && l_start_types.len() + l_end_types.len() <= r_types.len() => {
+                let (r_start_types, r_end_types) = r_types.split_at_mut(l_start_types.len());
+
+                return l_start_types.iter_mut().zip(r_start_types.iter_mut()).map(|(l, r)| l.match_type(r))
+                    .chain(l_end_types.iter_mut().zip(r_end_types.iter_mut().rev()).map(|(l, r)| l.match_type(r)))
+                    .all(|e| e);
+            },
+            (
+                ET::Tuple { 
+                    start: ref mut l_types, 
+                    end: l_end
+                }, 
+                ET::Tuple {
+                    start: ref mut r_start_types,
+                    end: ref mut r_end_types 
+                }
+            ) if l_end.is_empty() && r_start_types.len() + r_end_types.len() <= l_types.len() => {
+                let (l_start_types, l_end_types) = l_types.split_at_mut(r_start_types.len());
+                
+                return r_start_types.iter_mut().zip(l_start_types.iter_mut()).map(|(r, l)| r.match_type(l))
+                    .chain(r_end_types.iter_mut().zip(l_end_types.iter_mut().rev()).map(|(r, l)| r.match_type(l)))
+                    .all(|e| e);
+            },
+            ( ET::Tuple {..}, ET::Tuple {..}) => unreachable!("Both Group Types include a Discard Many Type"),
+            (
+                l @ ET::AmbiguousGroup { .. }, 
+                ET::Array { length: r_length, expr_type: r_type}
+            ) => {
+                {
+                    let ET::AmbiguousGroup { start: l_start_types, end: l_end_types } = l else {
+                        unreachable!();
+                    };
+
+                    if let Some(r_len) = r_length && l_start_types.len() + l_end_types.len() > *r_len {
+                        return false;
+                    }
+
+                    if !l_start_types.iter_mut().chain(l_end_types.iter_mut())
+                        .map(|e| e.match_type(r_type)).all(|e| e) 
+                    {
+                        return false;
+                    }
+                }
+
+                *l = ET::Array { length: *r_length, expr_type: r_type.clone() };
+                return true;
+            },
             (old_type, new_type) if old_type != new_type => return false,
             _ => ()
         };
         return true;
     }
+
+
+    pub fn size_of(&self, structs: &[Struct]) -> usize {
+        const ARCHITECTURE_SIZE: usize = std::mem::size_of::<usize>();
+
+        return match self {
+            ExprType::AmbiguousType => panic!("amibiguous type is not real type"),
+            ExprType::AmbiguousNegInteger | 
+            ExprType::AmbiguousPosInteger => ARCHITECTURE_SIZE,
+            ExprType::AmbiguousFloat => 4,
+            ExprType::I8 | ExprType::U8 | ExprType::Char | ExprType::Bool => 1,
+            ExprType::I16 | ExprType::U16 => 2,
+            ExprType::I32 | ExprType::U32 | ExprType::F32 => 4,
+            ExprType::I64 | ExprType::U64 | ExprType::F64 => 8,
+            ExprType::I128 | ExprType::U128 => 16,
+            ExprType::ISize | ExprType::USize => ARCHITECTURE_SIZE,
+            ExprType::Ref(_) => ARCHITECTURE_SIZE,
+            ExprType::MutRef(_) => ARCHITECTURE_SIZE,
+            ExprType::StringLiteral => ARCHITECTURE_SIZE * 2,
+            ExprType::Array { length: Some(length), expr_type } => expr_type.size_of(structs) * length,
+            ExprType::Array { length: None, .. } => panic!("type does not have constant size"),
+            ExprType::Tuple {..} => todo!("not implemented yet; requires padding"),
+            ExprType::AmbiguousGroup { .. } => todo!("not implemented yet; requires padding"),
+            ExprType::Function { .. } => todo!("not implemented yet"),
+            ExprType::FunctionPass { .. } => todo!("not implemented yet"),
+            ExprType::DiscardSingle => 0,
+            ExprType::DiscardMany => 0,
+            ExprType::Custom { ident } => {
+                let custom_struct = structs.iter()
+                    .find(|custom_struct| custom_struct.name == *ident)
+                    .expect(format!("struct {ident} does not exist").as_str());
+                let mut size = 0;
+                for field in &custom_struct.fields {
+                    size += field.field_type.size_of(structs);
+                }
+                size
+            },
+            ExprType::AnonymousCustom { fields } => {
+                let mut size = 0;
+                for (_, field_type) in fields.iter() {
+                    size += field_type.size_of(structs);
+                }
+                size
+            },
+            ExprType::Void => 0,
+            ExprType::Never => 0
+        };
+    }
+
+    pub fn is_real_type(&self) -> bool {
+        return !matches!(self, 
+            Self::AmbiguousType | 
+            Self::AmbiguousNegInteger | 
+            Self::AmbiguousPosInteger | 
+            Self::AmbiguousFloat | 
+            Self::AmbiguousGroup { .. } |
+            Self::DiscardSingle |
+            Self::DiscardMany |
+            Self::Void
+        )
+    }
+}
+
+impl std::fmt::Display for ExprType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let simple_output = match self {
+            ExpressionType::AmbiguousType       => Some("`Ambiguous Type`"),
+            ExpressionType::I8                  => Some("i8"),
+            ExpressionType::I16                 => Some("i16"),
+            ExpressionType::I32                 => Some("i32"),
+            ExpressionType::I64                 => Some("i64"),
+            ExpressionType::I128                => Some("i128"),
+            ExpressionType::ISize               => Some("isize"),
+            ExpressionType::AmbiguousNegInteger => Some("`Ambiguous Negative Integer`"),
+            ExpressionType::U8                  => Some("u8"),
+            ExpressionType::U16                 => Some("u16"),
+            ExpressionType::U32                 => Some("u32"),
+            ExpressionType::U64                 => Some("u64"),
+            ExpressionType::U128                => Some("u128"),
+            ExpressionType::USize               => Some("usize"),
+            ExpressionType::AmbiguousPosInteger => Some("`Ambiguous Positive Integer`"),
+            ExpressionType::F32                 => Some("f32"),
+            ExpressionType::F64                 => Some("f64"),
+            ExpressionType::AmbiguousFloat      => Some("`Ambiguous Float`"),
+            ExpressionType::Char                => Some("char"),
+            ExpressionType::StringLiteral       => Some("str"),
+            ExpressionType::Bool                => Some("bool"),
+            ExpressionType::DiscardSingle       => Some("_"),
+            ExpressionType::DiscardMany         => Some(".."),
+            ExpressionType::Void                => Some("void"),
+            ExpressionType::Never               => Some("!"),
+            _                                   => None
+        };
+
+        if let Some(out) = simple_output {
+            return write!(f, "{out}");
+        }
+        
+        write!(f, "{}", match self {
+            ExpressionType::Ref(expression_type) => format!("&{expression_type}"),
+            ExpressionType::MutRef(expression_type) => format!("&mut {expression_type}"),
+            ExpressionType::Array { length: Some(length), expr_type } => format!("[{expr_type}; {length}]"),
+            ExpressionType::Array { length: None, expr_type } => format!("[{expr_type}; ?]"),
+            ExpressionType::Tuple { .. } => todo!(),
+            ExpressionType::AmbiguousGroup { .. } => todo!(),
+            ExpressionType::Function { .. } => todo!(),
+            ExpressionType::FunctionPass { .. } => todo!(),
+            ExpressionType::Custom { ident } => ident.clone(),
+            ExpressionType::AnonymousCustom { fields } => 'str: {
+                let mut output = String::new();
+
+                if fields.is_empty() {
+                    output += "{}";
+                    break 'str output;
+                }
+
+                output += "{ ";
+                let ((first_field_name, first_field_type), fields) = fields.split_first().unwrap();
+
+                output += first_field_name.as_str();
+                output += ": ";
+                output += first_field_type.to_string().as_str();
+
+                for (field_name, field_type) in fields {
+                    output += ", ";
+                    output += field_name.as_str();
+                    output += ": ";
+                    output += field_type.to_string().as_str();
+                }
+
+                output += " }";
+                break 'str output;
+            },
+            ExpressionType::AmbiguousType |
+            ExpressionType::I8 |
+            ExpressionType::I16 |
+            ExpressionType::I32 |
+            ExpressionType::I64 |
+            ExpressionType::I128 |
+            ExpressionType::ISize |
+            ExpressionType::AmbiguousNegInteger |
+            ExpressionType::U8 |
+            ExpressionType::U16 |
+            ExpressionType::U32 |
+            ExpressionType::U64 |
+            ExpressionType::U128 |
+            ExpressionType::USize |
+            ExpressionType::AmbiguousPosInteger |
+            ExpressionType::F32 |
+            ExpressionType::F64 |
+            ExpressionType::AmbiguousFloat |
+            ExpressionType::Char |
+            ExpressionType::StringLiteral |
+            ExpressionType::Bool |
+            ExpressionType::DiscardSingle |
+            ExpressionType::DiscardMany | 
+            ExpressionType::Void | 
+            ExpressionType::Never => unreachable!()
+        })
+    }
 }
 
 #[derive(Debug)]
-pub struct VariableData<'v> {
-    _mutable: bool,
-    expr_type: ExprTypeCons<'v>
+pub struct VariableData<'tkns, 'bumps> {
+    pub tkn: &'tkns Tkn,
+    pub mutable: bool,
+    pub expr_type: ExprTypeCons<'bumps>
 }
 
-impl<'v> VariableData<'v> {
-    pub fn new(mutable: bool, expr_type: ExprTypeCons<'v>) -> Self {
+impl<'tkns, 'bumps> VariableData<'tkns, 'bumps> {
+    pub fn new(
+        tkn: &'tkns Tkn, 
+        mutable: bool, 
+        expr_type: ExprTypeCons<'bumps>
+    ) -> Self {
         VariableData {
-            _mutable: mutable,
+            tkn,
+            mutable,
             expr_type: expr_type
         }
     }
 
-    pub fn get(&self) -> &RefCell<ExprType> {
-        &self.expr_type.get()
+    pub fn get_type(&self) -> Ref<'_, ExprType> {
+        self.expr_type.get()
     }
 }
 
-impl<'v> Display for VariableData<'v> {
+impl<'tkns, 'bumps> Display for VariableData<'tkns, 'bumps> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
@@ -247,22 +514,36 @@ pub enum Literal {
     BooleanLiteral(bool),
 }
 
-//recursive
-fn parse_expression<'pe, 'sfda, 'i>(
-    expr_bump: &'pe ExprBump,
-    tokens: &'pe [Tkn], 
-    index: &mut usize,
-    functions: &'sfda RefCell<HashMap<String, FullFunctionDefinition<'pe>>>,
-    variables: &'sfda StackFrameDictAllocator<'i, String, VariableData<'i>>,
-    min_prec: u32,
+impl Literal {
+    pub fn get_type(&self) -> ExprType {
+        match self {
+            Literal::IntegerLiteral(_) => ExprType::AmbiguousNegInteger,
+            Literal::FloatLiteral(_) => ExprType::AmbiguousFloat,
+            Literal::CharLiteral(_) => ExprType::Char,
+            Literal::StringLiteral(_) => ExprType::StringLiteral,
+            Literal::BooleanLiteral(_) => ExprType::Bool,
+        }
+    }
+}
 
-) -> Result<Expr<'pe, 'sfda>, ParserError<'pe>> {
+//recursive
+fn parse_expression<'tkns, 'bumps, 'defs>(
+    expr_bump: &'bumps ExprBump,
+    structs: &'defs [Struct],
+    tokens: &'tkns [Tkn], 
+    index: &mut usize,
+    line: usize,
+    functions: &RefCell<HashMap<String, FullFnDef<'tkns, 'bumps, 'defs>>>,
+    variables: &StackFrameDictAllocator<'_, String, VariableData<'tkns, 'bumps>>,
+    min_prec: u32,
+) -> Result<Expr<'bumps, 'defs>, ParserError<'tkns, 'bumps, 'defs>> {
     let mut peek = *index;
     //let very_start_expr = peek;
     let Expr {
         expr_data: mut left_expr_data, 
-        expr_type: mut left_expr_type
-    } = parse_atom(expr_bump, tokens, &mut peek, functions, variables)?;
+        expr_type: mut left_expr_type,
+        ..
+    } = parse_atom(expr_bump, structs, tokens, &mut peek, line, functions, variables)?;
 
     loop {
         let mut operator = &tokens[peek].token;
@@ -299,63 +580,78 @@ fn parse_expression<'pe, 'sfda, 'i>(
         let start_expr = peek;
         let Expr {
             expr_data: right_expr_data, 
-            expr_type: right_expr_type
+            expr_type: mut right_expr_type,
+            ..
         } = parse_expression(
             expr_bump, 
+            structs,
             tokens, 
             &mut peek, 
+            line,
             functions, 
             variables, 
             next_min_prec
         )?;
 
-        let (_temp_left_expr_type, _temp_right_expr_type) = (left_expr_type.clone(), right_expr_type.clone());
+        //let (_temp_left_expr_type, _temp_right_expr_type) = (left_expr_type.clone(), right_expr_type.clone());
 
-        match BinOp::get_bin_op(operator).transform_type(left_expr_type, right_expr_type) {
+        match BinOp::get_bin_op(operator).transform_type(
+            expr_bump, 
+            &mut left_expr_type, 
+            &mut right_expr_type
+        ) {
             Some(expr_type) => {
-                // eprintln!(
-                //     "transformed to {:?} from applying operator {:?} to {:?} and {:?}", 
-                //     expr_type.get(),
-                //     BinOp::get_bin_op(operator),
-                //     temp_left_expr_type,
-                //     temp_right_expr_type
-                // );
                 left_expr_type = expr_type;
             },
             None => {
-                //eprintln!("fuck fuck fuck {:?} {:?}", temp_left_expr_type, temp_right_expr_type);
-                return Err(ParserError::new(
-                    &tokens[start_expr],
-                    "Incompatible typing"
-                ));
+                return Err(ParserError::CouldNotMatchType { 
+                    tkns: &tokens[start_expr..peek], 
+                    calculated_type: right_expr_type.clone_inner(), 
+                    expected_type: left_expr_type.clone_inner() 
+                });
             }
         }
 
         left_expr_data = expr_bump.alloc(ExprData::BinaryOp(
             BinOp::get_bin_op(operator),
-            left_expr_data,
-            right_expr_data,
+            Expr {
+                line,
+                expr_data: left_expr_data,
+                expr_type: left_expr_type.clone(),
+            },
+            Expr {
+                line,
+                expr_data: right_expr_data,
+                expr_type: right_expr_type
+            }
         ));
     }
 
     *index = peek;
     return Ok(Expr {
+        line,
         expr_data: left_expr_data,
         expr_type: left_expr_type
     });
 }
 
-pub fn parse_expression_set<'pes, 'sfda, 'i>(
-    expr_bump: &'pes ExprBump,
-    tokens: &'pes [Tkn],
+pub fn parse_expression_set<'tkns, 'bumps, 'defs>(
+    expr_bump: &'bumps ExprBump,
+    structs: &'defs [Struct],
+    tokens: &'tkns [Tkn],
     index: &mut usize,
-    functions: &'sfda RefCell<HashMap<String, FullFunctionDefinition<'pes>>>,
-    variables: &'sfda StackFrameDictAllocator<'i, String, VariableData<'i>>
-) -> Result<Expr<'pes, 'sfda>, ParserError<'pes>> {
+    line: usize,
+    functions: &RefCell<HashMap<String, FullFnDef<'tkns, 'bumps, 'defs>>>,
+    variables: &StackFrameDictAllocator<'_, String, VariableData<'tkns, 'bumps>>
+) -> Result<Expr<'bumps, 'defs>, ParserError<'tkns, 'bumps, 'defs>> {
     let mut peek = *index;
+    let beginning_index = peek;
 
-    let mut expr_indexes = vec![];
+    let mut expr_start_indices = vec![];
+    let mut expr_end_indices = vec![];
     let mut exprs: Vec<Expr> = vec![];
+
+    let last_expr_err;
 
     'parse_set: loop {
         let start_expr = peek;
@@ -364,17 +660,17 @@ pub fn parse_expression_set<'pes, 'sfda, 'i>(
 
         match parse_expression(
             expr_bump, 
+            structs,
             tokens, 
             &mut peek, 
+            line,
             functions,
             variables, 
             0
         ) {
             Ok(value) => expr = value,
-            Err(_err) => {
-                // eprintln!("finished parsing set because {:?} from {} to {}", 
-                //     err, &tokens[start_expr], &tokens[peek]
-                // );
+            Err(err) => {
+                last_expr_err = err;
                 break 'parse_set;
             }
         };
@@ -386,24 +682,31 @@ pub fn parse_expression_set<'pes, 'sfda, 'i>(
             right_args 
         } = expr.expr_type.clone_inner() {
             if exprs.len() != left_args.len() {
-                return Err(ParserError::new(
-                    &tokens[start_expr],
-                    "incorrect number of prefix arguments"
-                ));
+                return Err(ParserError::IncorrectNumberPrefixArguments { 
+                    tkn: &tokens[peek], 
+                    args: exprs.into_iter().map(|e| e.expr_type.clone_inner()).collect::<Vec<_>>().into_boxed_slice(), 
+                    expected_args: left_args.into_boxed_slice(), 
+                    function: functions.borrow().get(name.as_str()).unwrap().clone()
+                });
             }
 
             let mut left_exprs = vec![];
             let mut right_exprs = vec![];
 
-            for i in 0..exprs.len() {
-                exprs[i].expr_type.clone()
-                    .match_type(ExprTypeCons::new_temp(left_args[i].clone()))
-                    .ok_or(ParserError::new(
-                        &tokens[expr_indexes[i]],
-                        "could not match type to expected function paramter type"
-                    ))?;
+            for (i, mut expr) in exprs.drain(..).enumerate() {
+                expr.expr_type = expr.expr_type
+                    .match_type(&mut ExprTypeCons::new(expr_bump, left_args[i].clone()))
+                    .ok_or_else(|| ParserError::CouldNotMatchType {
+                        tkns: &tokens[expr_start_indices[i]..expr_end_indices[i]],
+                        calculated_type: expr.expr_type.clone_inner(),
+                        expected_type: left_args[i].clone()
+                    })?;
 
-                left_exprs.push(exprs[i].expr_data);
+                left_exprs.push(Expr {
+                    line,
+                    expr_data: expr.expr_data,
+                    expr_type: expr.expr_type
+                });
             }
 
             //TODO
@@ -412,99 +715,114 @@ pub fn parse_expression_set<'pes, 'sfda, 'i>(
 
             'parse_right_args: for arg in right_args {
                 let start_expr = peek;
-                let expr = parse_expression(
+                let mut expr = parse_expression(
                     expr_bump, 
+                    structs,
                     tokens, 
                     &mut peek, 
+                    line,
                     functions, 
                     variables, 
                     0
                 )?;
 
-                expr.expr_type.match_type(ExprTypeCons::new_temp(arg))
-                    .ok_or(ParserError::new(
-                        &tokens[start_expr],
-                        "could not match type to expected function paramter type"
-                    ))?;
+                expr.expr_type = expr.expr_type.match_type(&mut ExprTypeCons::new(expr_bump, arg.clone()))
+                    .ok_or_else(|| ParserError::CouldNotMatchType { 
+                        tkns: &tokens[start_expr..peek], 
+                        calculated_type: expr.expr_type.clone_inner(), 
+                        expected_type: arg
+                    })?;
 
-                right_exprs.push(expr.expr_data);
+                right_exprs.push(Expr {
+                    line,
+                    expr_data: expr.expr_data,
+                    expr_type: expr.expr_type
+                });
             }
 
             let expr = Expr {
+                line,
                 expr_data: expr_bump.alloc(ExprData::Function { 
                     name, 
                     left_args: left_exprs, 
                     right_args: right_exprs 
                 }),
-                expr_type: ExprTypeCons::new_temp(*return_type)
+                expr_type: ExprTypeCons::new(expr_bump, *return_type)
             };
 
-            //eprintln!("exprs contract to {:?}", &expr);
-            exprs.clear();
             exprs.push(expr);
-            //eprintln!("right after {:?}", &exprs);
             continue 'parse_set;
         }
 
-        //eprintln!("{:?} pushed", &expr);
         exprs.push(expr);
-        expr_indexes.push(start_expr);
-
-        //eprintln!("after push {:?} at {}", &exprs, &tokens[start_expr]);
+        expr_start_indices.push(start_expr);
+        expr_end_indices.push(peek);
     }
-
-    //eprintln!("{:?}", &exprs);
 
     *index = peek;
 
     return match &exprs[..]  {
         [expr] => Ok(expr.clone()),
-        _output @ [..] => {
-            //eprintln!("{output:?} is {} long", output.len());
-            Err(ParserError::new(
-                &tokens[peek],
-                "could not parse expression set into single expression"
-            ))
+        [] => {
+            Err(last_expr_err)
+        }
+        [..] => {
+            Err(ParserError::MultipleExpressions { 
+                tkn: &tokens[beginning_index], 
+                expr: exprs.into_boxed_slice()
+            })
         }
     };
 }
 
-fn parse_group_expression<'pge, 'sfda, 'i>(
-    expr_bump: &'pge ExprBump,
-    tokens: &'pge [Tkn], 
+fn parse_group_expression<'tkns, 'bumps, 'defs>(
+    expr_bump: &'bumps ExprBump,
+    structs: &'defs [Struct],
+    tokens: &'tkns [Tkn], 
     index: &mut usize,
-    functions: &'sfda RefCell<HashMap<String, FullFunctionDefinition<'pge>>>,
-    variables: &'sfda StackFrameDictAllocator<'i, String, VariableData<'i>>
-) -> Result<Expr<'pge, 'sfda>, ParserError<'pge>> {
+    line: usize,
+    functions: &RefCell<HashMap<String, FullFnDef<'tkns, 'bumps, 'defs>>>,
+    variables: &StackFrameDictAllocator<'_, String, VariableData<'tkns, 'bumps>>
+) -> Result<Expr<'bumps, 'defs>, ParserError<'tkns, 'bumps, 'defs>> {
     if is_expected_token(tokens, TknType::OpenParen, index) {
-        let expr = parse_expression_set(expr_bump, tokens, index, functions, variables)?;
+        let expr = parse_expression_set(expr_bump, structs, tokens, index, line, functions, variables)?;
         expect_token(tokens, TknType::CloseParen, index).unwrap();
         return Ok(expr);
     } else if is_expected_token(tokens, TknType::Dollar, index) {
-        let expr = parse_expression_set(expr_bump, tokens, index, functions, variables)?;
-        return Ok(expr.map(expr_bump, |data| ExprData::AmbiguousArray(data)));
+        let expr = parse_expression_set(expr_bump, structs, tokens, index, line, functions, variables)?;
+        //TODO return ambiguous group instead
+        return Ok(expr);
     }
-    return Err(ParserError::new(
-        &tokens[*index],
-        "Unexpected Token.  Was expecting an '(' or a '$'",
-    ));
+    return Err(ParserError::ExpectedTokens { 
+        tkn: &tokens[*index], 
+        received: tokens[*index..].iter().map(|tkn| &tkn.token),
+        expected: &[TknType::OpenParen, TknType::Dollar] 
+    });
 }
 
 
 
-fn parse_atom<'pa, 'sfda, 'i>(
-    expr_bump: &'pa ExprBump,
-    tokens: &'pa [Tkn], 
+fn parse_atom<'tkns, 'bumps, 'defs>(
+    expr_bump: &'bumps ExprBump,
+    structs: &'defs [Struct],
+    tokens: &'tkns [Tkn], 
     index: &mut usize,
-    functions: &'sfda RefCell<HashMap<String, FullFunctionDefinition<'pa>>>,
-    variables: &'sfda StackFrameDictAllocator<'i, String, VariableData<'i>>
-) -> Result<Expr<'pa, 'sfda>, ParserError<'pa>> {
+    line: usize,
+    functions: &RefCell<HashMap<String, FullFnDef<'tkns, 'bumps, 'defs>>>,
+    variables: &StackFrameDictAllocator<'_, String, VariableData<'tkns, 'bumps>>
+) -> Result<Expr<'bumps, 'defs>, ParserError<'tkns, 'bumps, 'defs>> {
     let mut peek = *index;
     let mut curr_token = tokens.get(peek).map(|e| &e.token);
 
     let op: Option<UnOp>;
-    if let Some(TknType::Operation(Op::Plus)) = curr_token {
+    if let Some(TknType::Operation(Op::PlusFloat)) = curr_token {
+        op = Some(UnOp::PlusFloat);
+        peek += 1;
+    } else if let Some(TknType::Operation(Op::Plus)) = curr_token {
         op = Some(UnOp::Plus);
+        peek += 1;
+    } else if let Some(TknType::Operation(Op::MinusFloat)) = curr_token {
+        op = Some(UnOp::MinusFloat);
         peek += 1;
     } else if let Some(TknType::Operation(Op::Minus)) = curr_token {
         op = Some(UnOp::Minus);
@@ -519,6 +837,9 @@ fn parse_atom<'pa, 'sfda, 'i>(
         if let Some(TknType::Keyword(Kwrd::Mutable)) = tokens.get(peek + 1).map(|e| &e.token) {
             op = Some(UnOp::BorrowMutable);
             peek += 2;
+        } else if let Some(TknType::Keyword(Kwrd::InteriorMutable)) = tokens.get(peek + 1).map(|e| &e.token) {
+            op = Some(UnOp::BorrowInteriorMutable);
+            peek += 2;
         } else {
             op = Some(UnOp::Borrow);
             peek += 1;
@@ -529,114 +850,348 @@ fn parse_atom<'pa, 'sfda, 'i>(
 
     curr_token = tokens.get(peek).map(|e| &e.token);
 
-    let expr_data: &ExprData;
-    let expr_type;
+    let mut expr_data: &ExprData;
+    let mut expr_type;
     if let Some(TknType::Identifier(ident)) = curr_token {
-        expr_data = expr_bump.alloc(ExprData::Identifier(ident.clone()));
-        let functions = functions.borrow();
-
-        if functions.contains_key(ident) {
-            //println!("grabbed function {ident} at {}", &tokens[peek]);
-            let fun_def = unsafe { functions.get(ident).unwrap_unchecked() };
+        if let Some(fun_def) = functions.borrow().get(ident) {
+            expr_data = expr_bump.alloc(ExprData::Identifier(ident.clone()));
             let left_args = fun_def.left_args.iter().map(|e| e.param_type.clone()).collect();
             let right_args = fun_def.right_args.iter().map(|e| e.param_type.clone()).collect();
-            expr_type = ExprTypeCons::new_temp(ExprType::Function { 
+            expr_type = ExprTypeCons::new(expr_bump, ExprType::Function { 
                 name: ident.clone(), 
                 return_type: Box::new(fun_def.return_type.clone()), 
                 left_args, 
                 right_args 
-            }) 
+            });
+            peek += 1;
+        } else if let Some(built_in_fn) = BuiltInFunction::from_name(ident) {
+            expr_data = expr_bump.alloc(ExprData::Identifier(ident.clone()));
+            expr_type = ExprTypeCons::new(expr_bump, BuiltInFunction::get_type(&built_in_fn));
+            peek += 1;
+        } else if let Some(custom_struct) = structs.iter()
+            .find(|custom_struct| custom_struct.name == *ident) 
+        {
+            peek += 1;
+
+            tokens::expect_token(tokens, TknType::OpenCurlyBrace, &mut peek)
+                .ok_or_else(|| ParserError::ExpectedToken { 
+                    tkn: &tokens[peek], 
+                    expected: TknType::OpenCurlyBrace 
+                })?;
+
+            let mut fields: HashMap<&str, &ExprData> = HashMap::new();
+            let mut field_indices: HashMap<&str, &Tkn> = HashMap::new();
+
+            let mut needed_comma = false;
+            loop {
+                let Some(TknType::Identifier(field_name)) = tokens::get_token(tokens, peek).map(|e| &e.token) else {
+                    break;
+                };
+                let field_index = peek;
+
+                if needed_comma {
+                    return Err(ParserError::ExpectedToken{ tkn: &tokens[peek], expected: TknType::Comma });
+                }
+
+                //TODO add accessor checks
+
+                let field = custom_struct.fields.iter().find(|field| 
+                    field.field_name == *field_name
+                ).ok_or_else(|| ParserError::FieldDoesNotExist { 
+                    tkn: &tokens[peek], 
+                    custom_struct
+                })?;
+
+                peek += 1;
+
+                if fields.contains_key(field.field_name.as_str()) {
+                    return Err(ParserError::AlreadyDefinedField { 
+                        tkn: &tokens[peek], 
+                        defined_field: field_indices.get(field.field_name.as_str()).unwrap() 
+                    });
+                }
+
+                if tokens::expect_token(tokens, TknType::Colon, &mut peek).is_some() {
+                    let start_expr = peek;
+                    let mut expr = parse_expression_set(
+                        expr_bump, 
+                        structs, 
+                        tokens, 
+                        &mut peek, 
+                        line,
+                        functions, 
+                        variables
+                    )?;
+                    
+                    expr.expr_type.match_type(
+                        &mut ExprTypeCons::new(expr_bump, field.field_type.clone())
+                    ).ok_or(ParserError::CouldNotMatchType { 
+                        tkns: &tokens[start_expr..peek], 
+                        calculated_type: expr.expr_type.clone_inner(), 
+                        expected_type: field.field_type.clone()
+                    })?;
+
+                    fields.insert(
+                        &field.field_name, 
+                        expr_bump.alloc(expr.expr_data.clone())
+                    );
+                    field_indices.insert(
+                        &field.field_name,
+                        &tokens[field_index]
+                    );
+                } else {
+                    let ident_type = &variables.get_in_stack(&field.field_name)
+                        .ok_or_else(|| ParserError::FieldExpressionNotDefined { 
+                            tkn: &tokens[peek], 
+                            field 
+                        })?
+                        .get().expr_type;
+
+                    ident_type.clone().match_type(
+                        &mut ExprTypeCons::new(expr_bump, field.field_type.clone())
+                    ).ok_or_else(|| ParserError::CouldNotMatchType { 
+                        tkns: core::slice::from_ref(&tokens[peek]), 
+                        calculated_type: ident_type.clone_inner(), 
+                        expected_type: field.field_type.clone()
+                    })?;
+
+                    fields.insert(
+                        &field.field_name, 
+                        expr_bump.alloc(
+                            ExprData::Identifier(field.field_name.clone())
+                        )
+                    );
+                    field_indices.insert(
+                        &field.field_name,
+                        &tokens[field_index]
+                    );
+                }
+
+                needed_comma = tokens::expect_token(tokens, TknType::Comma, &mut peek).is_none();
+            }
+
+            //TODO check if all fields are initialized
+
+            tokens::expect_token(tokens, TknType::CloseCurlyBrace, &mut peek)
+                .ok_or_else(|| ParserError::ExpectedToken { 
+                    tkn: &tokens[peek], 
+                    expected: TknType::CloseCurlyBrace 
+                })?;
+
+            expr_data = expr_bump.alloc(ExprData::Custom { fields });
+            expr_type = ExprTypeCons::new(expr_bump, ExprType::Custom { 
+                ident: custom_struct.name.clone() 
+            });
         } else {
-            expr_type = ExprTypeCons::new_stored(tokens, &peek, ident, variables)?;
+            expr_data = expr_bump.alloc(ExprData::Identifier(ident.clone()));
+            expr_type = ExprTypeCons::grab_variable_type(tokens, peek, ident, variables)?;
+            peek += 1;
         }
-        peek += 1;
-    } else if let Some(TknType::IntegerLiteral(int)) = curr_token {
+    } else if let Some(TknType::IntegerLiteral { int, .. }) = curr_token {
         expr_data = expr_bump.alloc(ExprData::Literal(Lit::IntegerLiteral(*int)));
-        expr_type = ExprTypeCons::new_temp(if *int >= 0 {
+        expr_type = ExprTypeCons::new(expr_bump, if *int >= 0 {
             ExprType::AmbiguousPosInteger
         } else {
             ExprType::AmbiguousNegInteger
         });
         peek += 1;
-    } else if let Some(TknType::FloatLiteral(float)) = curr_token {
+    } else if let Some(TknType::FloatLiteral { float, .. }) = curr_token {
         expr_data = expr_bump.alloc(ExprData::Literal(Lit::FloatLiteral(*float)));
-        expr_type = ExprTypeCons::new_temp(ExprType::AmbiguousFloat);
+        expr_type = ExprTypeCons::new(expr_bump, ExprType::AmbiguousFloat);
         peek += 1;
     } else if let Some(TknType::CharLiteral(chr)) = curr_token {
         expr_data = expr_bump.alloc(ExprData::Literal(Lit::CharLiteral(*chr)));
-        expr_type = ExprTypeCons::new_temp(ExprType::Char);
+        expr_type = ExprTypeCons::new(expr_bump, ExprType::Char);
         peek += 1;
     } else if let Some(TknType::StringLiteral(string)) = curr_token {
         expr_data = expr_bump.alloc(ExprData::Literal(Lit::StringLiteral(string.clone())));
-        expr_type = ExprTypeCons::new_temp(ExprType::StringLiteral);
+        expr_type = ExprTypeCons::new(expr_bump, ExprType::StringLiteral);
         peek += 1;
     } else if let Some(TknType::BooleanLiteral(b)) = curr_token {
         expr_data = expr_bump.alloc(ExprData::Literal(Lit::BooleanLiteral(*b)));
-        expr_type = ExprTypeCons::new_temp(ExprType::Bool);
+        expr_type = ExprTypeCons::new(expr_bump, ExprType::Bool);
         peek += 1;
     } else if let Some(TknType::OpenParen) = curr_token {
-        Expr {expr_data, expr_type} = parse_group_expression(
+        Expr {expr_data, expr_type, ..} = parse_group_expression(
             expr_bump, 
+            structs,
             tokens, 
             &mut peek, 
+            line,
             functions, 
             variables
         )?;
-    } else if let Some(TknType::OpenSquareBracket) | Some(TknType::Dollar) = curr_token {
-        Expr {expr_data, expr_type} = parse_array(
+    } else if let Some(TknType::OpenSquareBracket) = curr_token {
+        Expr {expr_data, expr_type, ..} = parse_array(
             expr_bump, 
+            structs,
             tokens, 
             &mut peek, 
+            line,
             functions, 
             variables
         )?;
-    }  else {
-        return Err(ParserError::new(
-            &tokens[peek],
-            "Unexpected Token.  Expected an Identifier, Literal, '(', or '$'",
-        ));
+    } else if let Some(TknType::Dollar) = curr_token {
+        if let Ok(expr) = parse_array(
+            expr_bump, 
+            structs,
+            tokens, 
+            &mut peek, 
+            line,
+            functions, 
+            variables
+        ) {
+            expr_data = expr.expr_data;
+            expr_type = expr.expr_type;
+        } else if let Ok(expr) = parse_group_expression(
+            expr_bump, 
+            structs, 
+            tokens, 
+            &mut peek, 
+            line,
+            functions, 
+            variables
+        ) {
+            expr_data = expr.expr_data;
+            expr_type = expr.expr_type;
+        } else {
+            return Err(ParserError::InvalidDollarExpression { 
+                tkn: &tokens[peek] 
+            });
+        }
+    } else if let Some(TknType::OpenCurlyBrace) = curr_token {
+        peek += 1;
+        let mut field_datas = vec![];
+        let mut field_types = vec![];
+        let mut need_comma = false;
+        loop {
+            if tokens::is_expected_token(tokens, TknType::CloseCurlyBrace, &mut peek) {
+                break;
+            }
+
+            if need_comma {
+                return Err(ParserError::ExpectedTokens { 
+                    tkn: &tokens[peek], 
+                    received: tokens[*index..].iter().map(|tkn| &tkn.token),
+                    expected: &[TknType::Comma, TknType::CloseCurlyBrace] 
+                });
+            }
+
+            let Some(TknType::Identifier(ident)) = tokens.get(peek).map(|e| &e.token) else {
+                return Err(ParserError::ExpectedIdentifier { tkn: &tokens[peek] });
+            };
+            peek += 1;
+
+            tokens::expect_token(tokens, TknType::Colon, &mut peek)
+                .ok_or_else(|| ParserError::ExpectedToken { 
+                    tkn: &tokens[peek], 
+                    expected: TknType::Colon 
+                })?;
+
+            let Expr {
+                expr_data,
+                expr_type,
+                ..
+            } = parse_expression_set(
+                expr_bump, 
+                structs, 
+                tokens, 
+                &mut peek, 
+                line, 
+                functions, 
+                variables
+            )?;
+
+            field_datas.push((ident.clone(), expr_data));
+            field_types.push((ident.clone(), expr_type.clone_inner()));
+
+            if !tokens::is_expected_token(tokens, TknType::Comma, &mut peek) {
+                need_comma = true;
+            }
+        }
+        expr_data = expr_bump.alloc(ExprData::AnonymousCustom { 
+            fields: field_datas.into_boxed_slice() 
+        });
+        expr_type = ExprTypeCons::new(expr_bump, ExprType::AnonymousCustom { 
+            fields: field_types.into_boxed_slice() 
+        })
+    } else {
+        return Err(ParserError::InvalidExpressionAtom { tkn: &tokens[peek] });
+    }
+
+    loop {
+        if tokens::is_expected_token(tokens, TknType::Dot, &mut peek) {
+            if let ExprType::Custom { ident } = expr_type.clone_inner() && 
+                let Some(TknType::Identifier(field_name)) = tokens::get_token(tokens, peek).map(|e| &e.token) && 
+                let Some(custom_struct) = structs.iter().find(|custom_struct| custom_struct.name == *ident) &&
+                let Some(field) = custom_struct.fields.iter().find(|field| field.field_name == *field_name)
+            {
+                expr_data = expr_bump.alloc(ExprData::CustomField { 
+                    data: expr_bump.alloc(Expr {line, expr_data, expr_type}), 
+                    field
+                });
+                expr_type = ExprTypeCons::new(expr_bump, field.field_type.clone());
+
+                peek += 1;
+                continue;
+            } else if let ExprType::AnonymousCustom { fields } = expr_type.clone_inner() &&
+                let Some(TknType::Identifier(field_name)) = tokens::get_token(tokens, peek).map(|e| &e.token) &&
+                let Some((field_name, field_type)) = fields.iter().find(|(anonymous_field_name, _)| 
+                    anonymous_field_name == field_name
+                )
+            {
+                expr_data = expr_bump.alloc(ExprData::AnonymousCustomField { 
+                    data: expr_bump.alloc(Expr {line, expr_data, expr_type}), 
+                    field_name: field_name.clone()
+                });
+                expr_type = ExprTypeCons::new(expr_bump, field_type.clone());
+
+                peek += 1;
+                continue;
+            } else {
+                //TODO detect methods
+                return Err(ParserError::InvalidDotExpression { 
+                    tkn: &tokens[peek - 1], 
+                    expr_type: expr_type.clone_inner() 
+                });
+            }
+        }
+        break;
     }
 
     *index = peek;
     match op {
-        None => return Ok(Expr {expr_data, expr_type}),
+        None => return Ok(Expr {line, expr_data, expr_type}),
         Some(op) => {
-            let expr_data = expr_bump.alloc(ExprData::UnaryOp(op, expr_data));
-            return Ok(Expr {expr_data, expr_type});
+            let expr_data = expr_bump.alloc(ExprData::UnaryOp(op, Expr {
+                line,
+                expr_data,
+                expr_type: expr_type.clone()
+            }));
+            return Ok(Expr {line, expr_data, expr_type});
         },
     }
 }
 
-fn parse_array<'pa, 'sfda, 'i>(
-    expr_bump: &'pa ExprBump,
-    tokens: &'pa [Tkn<'pa>],
+fn parse_array<'tkns, 'bumps, 'defs>(
+    expr_bump: &'bumps ExprBump,
+    structs: &'defs [Struct],
+    tokens: &'tkns [Tkn],
     index: &mut usize,
-    functions: &'sfda RefCell<HashMap<String, FullFunctionDefinition<'pa>>>,
-    variables: &'sfda StackFrameDictAllocator<'i, String, VariableData<'i>>
-) -> Result<Expr<'pa, 'sfda>, ParserError<'pa>> {
+    line: usize,
+    functions: &RefCell<HashMap<String, FullFnDef<'tkns, 'bumps, 'defs>>>,
+    variables: &StackFrameDictAllocator<'_, String, VariableData<'tkns, 'bumps>>
+) -> Result<Expr<'bumps, 'defs>, ParserError<'tkns, 'bumps, 'defs>> {
     let mut peek = *index;
     
-    // let end;
-    // let (mut step, mut count) = (peek, 0);
-    // loop {
-    //     if step >= tokens.len() {
-    //         return Err(ParserError::new(&tokens[*index], "Expected a ';' within the same scope."));
-    //     } else if let Tkn {token: TknType::OpenCurlyBrace, ..} = tokens[step] {
-    //         count += 1;
-    //     } else if let Tkn {token: TknType::CloseCurlyBrace, ..} = tokens[step] {
-    //         count -= 1;
-    //     } else if let Tkn {token: TknType::Semicolon, ..} = tokens[step] && count == 0 {
-    //         end = step;
-    //         break;
-    //     }
-    //     step += 1;
-    // }
-
     let expect_closing;
     if tokens::is_expected_token(tokens, TknType::OpenSquareBracket, &mut peek) {
         expect_closing = true;
     } else {
-        tokens::expect_token(tokens, TknType::Dollar, &mut peek);
+        tokens::expect_token(tokens, TknType::Dollar, &mut peek).ok_or_else(|| ParserError::ExpectedToken { 
+            tkn: &tokens[peek], 
+            expected: TknType::Dollar 
+        })?;
         expect_closing = false;
     }
 
@@ -647,14 +1202,16 @@ fn parse_array<'pa, 'sfda, 'i>(
         let start_expr = peek;
         let expr_possible = parse_expression(
             expr_bump, 
+            structs,
             tokens, 
             &mut peek, 
-            functions,
+            line,
+            functions, 
             variables, 
             0
         );
         if let Ok(expr) = expr_possible {
-            let Expr {expr_data, expr_type} = expr;
+            let Expr {expr_data, mut expr_type, ..} = expr;
 
             if array_type.is_none() {
                 array_type = Some(expr_type);
@@ -662,14 +1219,15 @@ fn parse_array<'pa, 'sfda, 'i>(
                 continue;
             };
 
-            array_type = array_type.map(|prev_type| 
-                prev_type.match_type(expr_type).ok_or(ParserError::new(
-                    &tokens[start_expr],
-                    "Type of expression does not match array type"
-                )
-            )).transpose()?;
+            array_type = array_type.map(|mut prev_type| 
+                prev_type.match_type(&mut expr_type).ok_or_else(|| ParserError::CouldNotMatchType { 
+                    tkns: &tokens[start_expr..peek], 
+                    calculated_type: expr_type.clone_inner(), 
+                    expected_type: prev_type.clone_inner() 
+                })
+            ).transpose()?;
 
-            // array_type = Some(prev_type.match_type(expr_type).ok_or(ParserError::new(
+            // array_type = Some(prev_type.match_type(expr_type).ok_or_else(|| ParserError::new(
             //     &tokens[start_expr],
             //     "Type of expression does not match expression"
             // ))?);
@@ -683,14 +1241,35 @@ fn parse_array<'pa, 'sfda, 'i>(
     let array_type = unsafe { array_type.unwrap_unchecked() };
 
     if expect_closing {
-        tokens::expect_token(tokens, TknType::CloseSquareBracket, &mut peek).ok_or(ParserError::new(
-            &tokens[*index],
-            "Expected a ']'"
-        ))?;
+        tokens::expect_token(tokens, TknType::CloseSquareBracket, &mut peek)
+            .ok_or_else(|| ParserError::ExpectedToken { 
+                tkn: &tokens[peek], 
+                expected: TknType::CloseAngularBracket 
+            })?;
     }
 
+    let length = elements.len();
+
     return Ok(Expr {
-        expr_data: expr_bump.alloc(ExprData::Array(elements)),
-        expr_type: array_type
+        line,
+        expr_data: expr_bump.alloc(ExprData::Array(elements.iter().map(|data| Expr {
+            line,
+            expr_data: data,
+            expr_type: array_type.clone()
+        }).collect())),
+        expr_type: ExprTypeCons::new(expr_bump, ExprType::Array { 
+            length: Some(length), 
+            expr_type: Box::new(array_type.clone_inner()) 
+        })
     });
+}
+
+#[cfg(test)]
+mod test {
+    use crate::parser::expr::ExprType;
+
+    #[test]
+    pub fn test_match_type() {
+        assert_ne!(ExprType::StringLiteral, ExprType::Char);
+    }
 }

@@ -7,7 +7,7 @@ pub fn expect_token(
 ) -> Option<()> {
     let token = tokens.get(*index).map(|e| &e.token)?;
     if let TknType::Either(left, right) = expected {
-        if token == left || token == right {
+        if *token == *left || *token == *right {
             *index += 1;
             return Some(());
         }
@@ -44,7 +44,7 @@ pub fn is_expected_token(
         None => return false,
     };
     if let TknType::Either(left, right) = expected {
-        if token == left || token == right {
+        if *token == *left || *token == *right {
             *index += 1;
             return true;
         }
@@ -83,7 +83,7 @@ pub fn is_token(
         None => return false,
     };
     if let TknType::Either(left, right) = expected {
-        if token == left || token == right {
+        if *token == *left || *token == *right {
             return true;
         }
         return false;
@@ -106,7 +106,7 @@ pub fn is_tokens(
     return true;
 }
 
-pub fn get_token<'t>(tokens: &'t [Tkn], index: usize) -> Option<&'t Tkn<'t>> {
+pub fn get_token<'tkns>(tokens: &'tkns [Tkn], index: usize) -> Option<&'tkns Tkn> {
     if index >= tokens.len() {
         return None;
     }

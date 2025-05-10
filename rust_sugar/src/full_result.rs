@@ -406,7 +406,7 @@ impl<T, E1, E2> FullResult<T, E1, E2> {
         match self {
             FullResult::Ok(t) => FullResult::Ok(t),
             FullResult::SoftErr(se) => op(Either::This(se)),
-            FullResult::HardErr(he) => op(Either::That(he)),
+            FullResult::HardErr(he) => FullResult::HardErr(he),
         }
     }
 
@@ -522,10 +522,24 @@ where
     }
 }
 
+impl<T, E1, E2> Debug for FullResult<T, E1, E2> where T: Debug, E1: Debug, E2: Debug {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ok(arg0) => f.debug_tuple("Ok").field(arg0).finish(),
+            Self::SoftErr(arg0) => f.debug_tuple("SoftErr").field(arg0).finish(),
+            Self::HardErr(arg0) => f.debug_tuple("HardErr").field(arg0).finish(),
+        }
+    }
+}
+
 pub trait OptionToFullResult<T> {
     fn ok_or_soft<E1, E2>(self, se: E1) -> FullResult<T, E1, E2>;
 
     fn ok_or_hard<E1, E2>(self, he: E2) -> FullResult<T, E1, E2>;
+
+    fn ok_or_else_soft<E1, E2>(self, se: impl FnOnce() -> E1) -> FullResult<T, E1, E2>;
+
+    fn ok_or_else_hard<E1, E2>(self, he: impl FnOnce() -> E2) -> FullResult<T, E1, E2>;
 }
 
 impl<T> OptionToFullResult<T> for Option<T> {
@@ -541,6 +555,20 @@ impl<T> OptionToFullResult<T> for Option<T> {
             return FullResult::Ok(t);
         }
         return FullResult::HardErr(he);
+    }
+
+    fn ok_or_else_soft<E1, E2>(self, se: impl FnOnce() -> E1) -> FullResult<T, E1, E2> {
+        if let Some(t) = self {
+            return FullResult::Ok(t);
+        }
+        return FullResult::SoftErr(se());
+    }
+
+    fn ok_or_else_hard<E1, E2>(self, he: impl FnOnce() -> E2) -> FullResult<T, E1, E2> {
+        if let Some(t) = self {
+            return FullResult::Ok(t);
+        }
+        return FullResult::HardErr(he());
     }
 }
 

@@ -3,13 +3,13 @@ use crate::string_utils::StringUtils;
 use super::token::{Kwrd, Op, Type, Tkn, TknType};
 
 const SINGLE_TOKEN_CHARACTERS: &str = "(){}[];?.,";
-const OPERATOR_CHARACTERS: &str = "+-*/%&|^=!~:<>";
+const OPERATOR_CHARACTERS: &str = "+-*/%&|^=!~:<>.";
 const OPERATORS: &[&str] = &[
     "!..=", "!..", "..=", "..",
-    "++=", "+=", "-=", "**=", "*=", "//=", "/=", "%=",
+    "++=", "+.=", "+=", "-.=", "-=", "**.=", "**=", "*.=", "*=", "/.=", "/=", "%.=", "%=",
     "&&=", "||=", "^^=", "=!", "&=", "|=", "^=", "=~", "<<=", ">>=",
-    "==", "!=", "<=", ">=", "=", "->",
-    "++", "+", "--", "-", "**", "*", "//", "/", "%",
+    "==", "!=", "<=", ">=", "=",
+    "++", "+.", "+", "-.", "-", "**.", "**", "*.", "*", "/.", "/", "%.", "%",
     "&&", "||", "^^", "!", "&", "|", "^", "~", "<<", ">>",
     "<", ">",
 ];
@@ -70,9 +70,9 @@ impl<'l> Lexer<'l> {
             let line = self.line_number;
 
             match chr {
-                '#' => {
+                '/' => {
                     match self.peek_after(1) {
-                        Some('#') => {
+                        Some('/') => {
                             let mut after = 2;
                             while let Some(chr) = self.peek_after(after) {
                                 if chr == '\n' || chr == '\r' {
@@ -88,17 +88,15 @@ impl<'l> Lexer<'l> {
                         Some(',') => {
                             let mut after = 2;
                             let mut count = 1;
-                            /*
-                             * do stuff 
-                             */
+                            
                             while 
                                 let (Some(chr1), Some(chr2)) = 
                                 (self.peek_after(after), self.peek_after(after + 1)) 
                             {
-                                if chr1 == '#' && chr2 == ',' {
+                                if chr1 == '/' && chr2 == ',' {
                                     count += 1;
                                     after += 2;
-                                } else if chr1 == ',' && chr2 == '#' {
+                                } else if chr1 == ',' && chr2 == '/' {
                                     count -= 1;
                                     after += 2;
                                 } else if chr1 == '\n' || chr1 == '\r' {
@@ -118,18 +116,7 @@ impl<'l> Lexer<'l> {
                             continue;
                         },
                         _ => {
-                            let mut after = 1;
-
-                            while let Some(chr) = self.peek_after(after) {
-                                if is_invalid_character(chr) {
-                                    break;
-                                }
-                                after += 1;
-                            }
-
-                            self.consume(after);
-                            self.line_index += after;
-                            token = TknType::Invalid;
+                            token = self.get_multi_character_token();
                         }
                     }
                 },
@@ -243,11 +230,53 @@ impl<'l> Lexer<'l> {
         return spaces;
     }
 
-    fn get_multi_character_token(&mut self) -> TknType<'l>{
-        let multi_character: &'l str;
+    fn get_multi_character_token(&mut self) -> TknType {
+        let mut multi_character: &'l str;
         let start_index: usize = self.index;
         let mut end_index: usize = self.index;
 
+        // Before trying to parse a float literal, we must check
+        // that it is instead an integer literal, or else
+        // integers will get confused as floats
+        while let Some(chr) = self.peek_at(end_index) {
+            if !chr.is_alphanumeric() {
+                break;
+            }
+            end_index += 1;
+        }
+
+        multi_character = self.source_code.slice(start_index..end_index);
+        if let Some(token) = self.get_integer_literal(multi_character) {
+            return token;
+        }
+
+        // To avoid conflicts regarding operators featuring a . (such as "/." and "..")
+        // and floating point numbers (i.e. 6.28), we check for floating point numbers
+        // first.  If we don't, 6.28 will be parsed as
+        // { IntegerLiteral(6), Dot, IntegerLiteral(28) } 
+        // instead of { FloatLiteral(6.28) }
+        let mut contains_dot = false;
+        while let Some(chr) = self.peek_at(end_index) {
+            if !chr.is_alphanumeric() && chr != '.' {
+                break;
+            }
+            if chr == '.' {
+                if contains_dot {
+                    break;
+                }
+                contains_dot = true;
+            }
+            end_index += 1;
+        }
+
+        multi_character = self.source_code.slice(start_index..end_index);
+        if let Some(token) = self.get_float_literal(multi_character) {
+            return token;
+        }
+
+        // We have to reset end index back to its initial state to recheck
+        // other possible multicharacter tokens in the event that it is not a float
+        end_index = self.index;
         while let Some(chr) = self.peek_at(end_index) {
             if is_invalid_character(chr) {
                 break;
@@ -297,6 +326,11 @@ impl<'l> Lexer<'l> {
                 self.line_index += 3;
                 return TknType::Keyword(Kwrd::Mutable);
             },
+            "im" => {
+                self.consume(2);
+                self.line_index += 2;
+                return TknType::Keyword(Kwrd::InteriorMutable);
+            },
             "rec" => {
                 self.consume(3);
                 self.line_index += 3;
@@ -312,7 +346,7 @@ impl<'l> Lexer<'l> {
                 self.line_index += 6;
                 return TknType::Keyword(Kwrd::Unsafe);
             },
-            "fn" | "fun" | "function" => {
+            "fn" => {
                 self.consume(multi_character.len());
                 self.line_index += multi_character.len();
                 return TknType::Keyword(Kwrd::Function);
@@ -322,17 +356,17 @@ impl<'l> Lexer<'l> {
                 self.line_index += 8;
                 return TknType::Keyword(Kwrd::Accessor);
             },
-            "whitelist" => {
-                self.consume(9);
-                self.line_index += 9;
-                return TknType::Keyword(Kwrd::Whitelist);
+            "enclave" => {
+                self.consume(7);
+                self.line_index += 7;
+                return TknType::Keyword(Kwrd::Enclave);
             },
-            "blacklist" => {
-                self.consume(9);
-                self.line_index += 9;
-                return TknType::Keyword(Kwrd::Blacklist);
+            "exclave" => {
+                self.consume(7);
+                self.line_index += 7;
+                return TknType::Keyword(Kwrd::Exclave);
             },
-            "struct" | "class" => {
+            "struct" => {
                 self.consume(multi_character.len());
                 self.line_index += multi_character.len();
                 return TknType::Keyword(Kwrd::Struct);
@@ -389,8 +423,6 @@ impl<'l> Lexer<'l> {
             },
             _ => {
                 return self.get_operation()
-                    .or_else(|| self.get_integer_literal(multi_character))
-                    .or_else(|| self.get_float_literal(multi_character))
                     .or_else(|| self.get_char_literal())
                     .or_else(|| self.get_string_literal())
                     .or_else(|| self.get_type(multi_character))
@@ -400,7 +432,7 @@ impl<'l> Lexer<'l> {
         };
     }
 
-    fn get_operation(&mut self) -> Option<TknType<'l>> {
+    fn get_operation(&mut self) -> Option<TknType> {
         if let Some(chr) = self.peek() {
             if !OPERATOR_CHARACTERS.contains(chr) {
                 return None;
@@ -422,53 +454,53 @@ impl<'l> Lexer<'l> {
                     "!..=" => Some(TknType::Operation(Op::BangRangeEquals)), 
                     "!.." => Some(TknType::Operation(Op::BangRange)), 
                     "..=" => Some(TknType::Operation(Op::RangeEquals)), 
-                    ".." => Some(TknType::Operation(Op::Range)), 
+                    ".." => Some(TknType::Either(
+                        Box::new(TknType::DiscardMany),
+                        Box::new(TknType::Operation(Op::Range))
+                    )), 
                     "==" => Some(TknType::Operation(Op::Equals)), 
                     "!=" => Some(TknType::Operation(Op::NotEquals)), 
                     "<=" => Some(TknType::Operation(Op::LessThanEqualTo)),
                     ">=" => Some(TknType::Operation(Op::GreaterThanEqualTo)), 
                     "<" => Some(TknType::Either(
-                      &TknType::Operation(Op::LessThan),
-                      &TknType::OpenAngularBracket
+                      Box::new(TknType::Operation(Op::LessThan)),
+                      Box::new(TknType::OpenAngularBracket)
                     )), 
                     ">" => Some(TknType::Either(
-                      &TknType::Operation(Op::GreaterThan),
-                      &TknType::CloseAngularBracket
+                      Box::new(TknType::Operation(Op::GreaterThan)),
+                      Box::new(TknType::CloseAngularBracket)
                     )), 
                     "++=" => Some(TknType::Operation(Op::ConcatEquals)), 
+                    "+.=" => Some(TknType::Operation(Op::PlusFloatEquals)),
                     "+=" => Some(TknType::Operation(Op::PlusEquals)),
+                    "-.=" => Some(TknType::Operation(Op::MinusFloatEquals)),
                     "-=" => Some(TknType::Operation(Op::MinusEquals)), 
+                    "**.=" => Some(TknType::Operation(Op::ExponentFloatEquals)),
                     "**=" => Some(TknType::Operation(Op::ExponentEquals)), 
+                    "*.=" => Some(TknType::Operation(Op::MultiplyFloatEquals)),
                     "*=" => Some(TknType::Operation(Op::MultiplyEquals)), 
-                    "//=" => Some(TknType::Operation(Op::FloatDivideEquals)), 
-                    "/=" => Some(TknType::Operation(Op::IntDivideEquals)),
+                    "/.=" => Some(TknType::Operation(Op::DivideFloatEquals)), 
+                    "/=" => Some(TknType::Operation(Op::DivideEquals)),
+                    "%.=" => Some(TknType::Operation(Op::ModuloFloatEquals)),
                     "%=" => Some(TknType::Operation(Op::ModuloEquals)),
-                    "&&=" => Some(TknType::Operation(Op::LogicAndEquals)), 
-                    "&=" => Some(TknType::Operation(Op::BitwiseAndEquals)), 
-                    "||=" => Some(TknType::Operation(Op::LogicOrEquals)), 
-                    "|=" => Some(TknType::Operation(Op::BitwiseOrEquals)), 
-                    "^^=" => Some(TknType::Operation(Op::LogicXorEquals)), 
-                    "^=" => Some(TknType::Operation(Op::BitwiseXorEquals)), 
-                    "<<=" => Some(TknType::Operation(Op::BitwiseShiftLeftEquals)),
-                    ">>=" => Some(TknType::Operation(Op::BitwiseShiftRightEquals)),
-                    "=!" => Some(TknType::Operation(Op::EqualsNot)), 
-                    "=~" => Some(TknType::Operation(Op::EqualsNegate)), 
-                    "++" => Some(TknType::Operation(Op::PlusPlus)), 
-                    "--" => Some(TknType::Operation(Op::MinusMinus)), 
+                    "+." => Some(TknType::Operation(Op::PlusFloat)),
                     "+" => Some(TknType::Operation(Op::Plus)), 
-                    "-" => Some(TknType::Operation(Op::Minus)), 
+                    "-." => Some(TknType::Operation(Op::MinusFloat)),
+                    "-" => Some(TknType::Operation(Op::Minus)),
+                    "**." => Some(TknType::Operation(Op::ExponentFloat)), 
                     "**" => Some(TknType::Operation(Op::Exponent)), 
+                    "*." => Some(TknType::Operation(Op::MultiplyFloat)),
                     "*" => Some(TknType::Operation(Op::Multiply)), 
-                    "//" => Some(TknType::Operation(Op::FloatDivide)), 
-                    "/" => Some(TknType::Operation(Op::IntDivide)), 
+                    "/." => Some(TknType::Operation(Op::DivideFloat)), 
+                    "/" => Some(TknType::Operation(Op::Divide)), 
+                    "%." => Some(TknType::Operation(Op::ModuloFloat)),
                     "%" => Some(TknType::Operation(Op::Modulo)),
                     "&&" => Some(TknType::Operation(Op::LogicAnd)), 
                     "||" => Some(TknType::Operation(Op::LogicOr)), 
-                    "^^" => Some(TknType::Operation(Op::LogicXor)),
                     "!" => Some(TknType::Operation(Op::LogicNot)),
                     "&" => Some(TknType::Either(
-                        &TknType::Operation(Op::BitwiseAnd),
-                        &TknType::Borrow
+                        Box::new(TknType::Operation(Op::BitwiseAnd)),
+                        Box::new(TknType::Borrow)
                     )), 
                     "|" => Some(TknType::Operation(Op::BitwiseOr)), 
                     "^" => Some(TknType::Operation(Op::BitwiseXor)),
@@ -477,7 +509,6 @@ impl<'l> Lexer<'l> {
                     ">>" => Some(TknType::Operation(Op::BitwiseShiftRight)), 
                     "=>" => Some(TknType::Operation(Op::Arrow)),
                     "=" => Some(TknType::Operation(Op::Assign)),
-                    "->" => Some(TknType::Operation(Op::Insert)),
                     _ => unreachable!()
                 }
             }
@@ -486,29 +517,35 @@ impl<'l> Lexer<'l> {
         return None;
     }
 
-    fn get_integer_literal(&mut self, multi_character: &str) -> Option<TknType<'l>> {
+    fn get_integer_literal(&mut self, multi_character: &str) -> Option<TknType> {
         match multi_character.parse() {
             Ok(int) => {
                 self.consume(multi_character.len());
                 self.line_index += multi_character.len();
-                return Some(TknType::IntegerLiteral(int));
+                return Some(TknType::IntegerLiteral { 
+                    int, 
+                    len: multi_character.len() 
+                });
             },
             Err(_) => return None
         }
     }
 
-    fn get_float_literal(&mut self, multi_character: &str) -> Option<TknType<'l>> {
+    fn get_float_literal(&mut self, multi_character: &str) -> Option<TknType> {
         match multi_character.parse() {
             Ok(float) => {
                 self.consume(multi_character.len());
                 self.line_index += multi_character.len();
-                return Some(TknType::FloatLiteral(float));
+                return Some(TknType::FloatLiteral {
+                    float,
+                    len: multi_character.len()
+                });
             },
             Err(_) => return None
         }
     }
 
-    fn get_char_literal(&mut self) -> Option<TknType<'l>> {
+    fn get_char_literal(&mut self) -> Option<TknType> {
         
         match self.peek() {
             Some('\'') => (),
@@ -538,7 +575,7 @@ impl<'l> Lexer<'l> {
         }
     }
 
-    fn get_string_literal(&mut self) -> Option<TknType<'l>> {
+    fn get_string_literal(&mut self) -> Option<TknType> {
         match self.peek() {
             Some('\"') => (),
             _ => return None
@@ -565,7 +602,7 @@ impl<'l> Lexer<'l> {
     }
 
 
-    fn get_type(&mut self, multi_character: &str) -> Option<TknType<'l>> {
+    fn get_type(&mut self, multi_character: &str) -> Option<TknType> {
         match multi_character {
             "i8" => {
                 self.consume(2);
@@ -643,7 +680,7 @@ impl<'l> Lexer<'l> {
         return None;
     }
 
-    fn get_identifier(&mut self, multi_character: &str) -> Option<TknType<'l>> {
+    fn get_identifier(&mut self, multi_character: &str) -> Option<TknType> {
         let mut break_index: usize = 0;
 
         if let Some(chr) = multi_character.chars().nth(0) {
@@ -668,7 +705,7 @@ impl<'l> Lexer<'l> {
         return Some(TknType::Identifier(multi_character.to_string()));
     }
 
-    fn get_invalid(&mut self, multi_character: &str) -> TknType<'l> {
+    fn get_invalid(&mut self, multi_character: &str) -> TknType {
         self.consume(multi_character.len());
         return TknType::Invalid;
     }

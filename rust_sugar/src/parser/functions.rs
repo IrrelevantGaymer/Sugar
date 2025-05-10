@@ -2,70 +2,149 @@ use std::{cell::RefCell, collections::HashMap};
 
 use stack_frame_allocators::stack_frame_dict_allocator::StackFrameDictAllocator;
 
-use crate::{lexer::token::{Kwrd, Op, Tkn, TknType}, parser::{expr::ExprTypeCons, tokens}};
+use crate::{full_result::{FullResult, OptionToFullResult}, lexer::token::{Kwrd, Op, Tkn, TknType}, parser::{expr::ExprTypeCons, tokens}};
 
-use super::{accessors, expr::{ExprData, ExprType, VariableData}, stmt::{self, Stmt}, ExprBump, FnParamBump, ParserError, StmtBump};
+use super::{accessors, expr::{Expr, ExprData, ExprType, VariableData}, stmt::{self, StmtData}, structs::Struct, ExprBump, FnParamBump, ParserError, StmtBump};
 
-pub type Fun<'f> = Function<'f>;
+#[allow(non_camel_case_types)]
+pub enum BuiltInFunction {
+    print_string, print_i32,
+    read_char, read_i32,
+    panic
+}
+
+impl BuiltInFunction {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "print_string" => Some(BuiltInFunction::print_string),
+            "print_i32" => Some(BuiltInFunction::print_i32),
+            "read_char" => Some(BuiltInFunction::read_char),
+            "read_i32" => Some(BuiltInFunction::read_i32),
+            "panic" => Some(BuiltInFunction::panic),
+            _ => None
+        }
+    }
+
+    pub fn match_args(&self, left_args: &[Expr], right_args: &[Expr]) -> bool {
+        let ExprType::Function {
+            left_args: built_in_left_args,
+            right_args: built_in_right_args,
+            ..
+        } = self.get_type() else {
+            unreachable!("BuiltInFunction should be of type Function");
+        };
+
+        return left_args.iter().map(|Expr {expr_type, ..}| expr_type.clone_inner()).eq(built_in_left_args) &&
+            right_args.iter().map(|Expr {expr_type, ..}| expr_type.clone_inner()).eq(built_in_right_args);
+    }
+
+    pub fn get_type(&self) -> ExprType {
+        match self {
+            BuiltInFunction::print_string => ExprType::Function { 
+                name: String::from("print_string"), 
+                return_type: Box::new(ExprType::Void), 
+                left_args: vec![], 
+                right_args: vec![
+                    ExprType::StringLiteral
+                ] 
+            },
+            BuiltInFunction::print_i32 => ExprType::Function { 
+                name: String::from("print_i32"), 
+                return_type: Box::new(ExprType::Void), 
+                left_args: vec![], 
+                right_args: vec![
+                    ExprType::I32
+                ] 
+            },
+            BuiltInFunction::read_char => ExprType::Function { 
+                name: String::from("read_char"), 
+                return_type: Box::new(
+                    ExprType::AnonymousCustom { fields: Box::new([
+                        (String::from("value"), ExprType::Char),
+                        (String::from("success"), ExprType::Bool)
+                    ]) 
+                }), 
+                left_args: vec![], 
+                right_args: vec![] 
+            },
+            BuiltInFunction::read_i32 => ExprType::Function { 
+                name: String::from("read_i32"), 
+                return_type: Box::new(
+                    ExprType::AnonymousCustom { fields: Box::new([
+                        (String::from("value"), ExprType::I32),
+                        (String::from("success"), ExprType::Bool)
+                    ]) 
+                }), 
+                left_args: vec![], 
+                right_args: vec![] 
+            },
+            BuiltInFunction::panic => ExprType::Function { 
+                name: String::from("panic"), 
+                return_type: Box::new(ExprType::Never), 
+                left_args: vec![], 
+                right_args: vec![
+                    ExprType::StringLiteral
+                ] 
+            }
+        }
+    }
+}
+
+pub type Fun<'tkns, 'bumps, 'defs> = Function<'tkns, 'bumps, 'defs>;
 #[derive(Clone, Debug)]
-pub struct Function<'f> {
+pub struct Function<'tkns, 'bumps, 'defs> {
     pub location: String,
     pub name: String,
     pub accessibility: String,
     pub mutable: bool,
     pub recursive: bool,
-    pub left_args: &'f [FnParam<'f>],
-    pub right_args: &'f [FnParam<'f>],
+    pub left_args: &'bumps [FnParam<'tkns, 'bumps, 'defs>],
+    pub right_args: &'bumps [FnParam<'tkns, 'bumps, 'defs>],
     pub return_type: ExprType,
-    pub body: Vec<&'f Stmt<'f>>,
+    pub body: Vec<&'bumps StmtData<'bumps, 'defs>>,
 }
 
-pub type FnParam<'fp> = FunctionParamater<'fp>;
+pub type FnParam<'tkns, 'bumps, 'defs> = FunctionParamater<'tkns, 'bumps, 'defs>;
 #[derive(Clone, Debug)]
-pub struct FunctionParamater<'fp> {
+pub struct FunctionParamater<'tkns, 'bumps, 'defs> {
+    pub tkn: &'tkns Tkn,
     pub param_type: ExprType,
     pub param_name: Option<String>,
-    pub param_default: Option<&'fp ExprData<'fp>>,
-}
-
-impl<'fp> FunctionParamater<'fp> {
-    pub fn default() -> FunctionParamater<'fp> {
-        return FunctionParamater {
-            param_type: ExprType::Void,
-            param_name: None,
-            param_default: None,
-        };
-    }
+    pub param_default: Option<&'bumps ExprData<'bumps, 'defs>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct FunctionDefinition<'df> {
-    pub accessibility: Option<&'df Tkn<'df>>,
+pub struct FunctionDefinition<'tkns> {
+    pub accessibility: Option<&'tkns Tkn>,
     pub name: String,
     pub mutable: bool,
     pub recursive: bool,
-    pub arg_tokens: &'df [Tkn<'df>],
-    pub body_tokens: &'df [Tkn<'df>],
+    pub arg_tokens: &'tkns [Tkn],
+    pub body_tokens: &'tkns [Tkn],
 }
 
+pub type FullFnDef<'tkns, 'bumps, 'defs> = FullFunctionDefinition<'tkns, 'bumps, 'defs>;
 #[derive(Clone, Debug)]
-pub struct FullFunctionDefinition<'dff> {
+pub struct FullFunctionDefinition<'tkns, 'bumps, 'defs> {
     pub accessibility: String,
     pub name: String,
     pub mutable: bool,
     pub recursive: bool,
-    pub left_args: &'dff [FnParam<'dff>],
-    pub right_args: &'dff [FnParam<'dff>],
+    pub left_args: &'bumps [FnParam<'tkns, 'bumps, 'defs>],
+    pub right_args: &'bumps [FnParam<'tkns, 'bumps, 'defs>],
     pub return_type: ExprType
 }
 
-impl<'dff> FullFunctionDefinition<'dff> {
-    pub fn from_partial_fn_def<'fpfd>(
-        fn_param_bump: &'fpfd FnParamBump,
-        fn_def: FunctionDefinition<'fpfd>, 
+impl<'tkns, 'bumps, 'defs> FullFnDef<'tkns, 'bumps, 'defs> {
+    pub fn from_partial_fn_def(
+        fn_param_bump: &'bumps FnParamBump,
+        fn_def: FunctionDefinition<'tkns>, 
         accessors: &[&str],
         struct_names: &[&str]
-    ) -> Result<(FullFunctionDefinition<'fpfd>, &'fpfd [Tkn<'fpfd>]), ParserError<'fpfd>> {
+    ) -> Result<
+        (FullFnDef<'tkns, 'bumps, 'defs>, &'tkns [Tkn]), 
+        ParserError<'tkns, 'bumps, 'defs>
+    > {
         let FunctionDefinition {
             accessibility,
             name,
@@ -75,10 +154,10 @@ impl<'dff> FullFunctionDefinition<'dff> {
             body_tokens
         } = fn_def;
 
-        let accessibility = match accessors::get_accessor_string(accessibility, &mut 0, &accessors) {
-            Some(accessor) => accessor,
-            None => return Err(ParserError::new(accessibility.unwrap(), "Accessor is not defined"))
-        };
+        let accessibility = accessors::get_accessor_string(accessibility, &mut 0, &accessors)
+            .ok_or_else(|| ParserError::AccessorNotDefined { 
+                tkn: accessibility.unwrap() 
+            })?;
 
         let (left_args, right_args, return_type) = define_arguments(
             fn_param_bump,
@@ -86,7 +165,7 @@ impl<'dff> FullFunctionDefinition<'dff> {
             &struct_names
         )?;
         
-        return Ok((FullFunctionDefinition {
+        return Ok((FullFnDef {
             accessibility,
             name: name.clone(),
             mutable: mutable,
@@ -98,15 +177,9 @@ impl<'dff> FullFunctionDefinition<'dff> {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum FnType {
     Prefix, Infix, Postfix
-}
-
-pub type ArgDef = ArgumentDefinitionType;
-#[derive(PartialEq)]
-pub enum ArgumentDefinitionType {
-    JustTypes, JustIdents, Both
 }
 
 pub type FnParseState = FunctionParseState;
@@ -128,10 +201,10 @@ pub enum Encapsulation {
     Dollar
 }
 
-pub fn define_function<'df>(
-    tokens: &'df [Tkn<'df>], 
+pub fn define_function<'tkns, 'bumps, 'defs>(
+    tokens: &'tkns [Tkn], 
     index: &mut usize,
-) -> Option<FunctionDefinition<'df>> {
+) -> FullResult<FunctionDefinition<'tkns>, (), ParserError<'tkns, 'bumps, 'defs>> {
     let mut peek = *index;
     let accessibility = match tokens[peek].token {
         TknType::Keyword(Kwrd::Public)
@@ -147,7 +220,7 @@ pub fn define_function<'df>(
             None
         },
         _ => {
-            return None;
+            return FullResult::SoftErr(());
         },
     };
 
@@ -155,60 +228,58 @@ pub fn define_function<'df>(
     let recursive = tokens::is_expected_token(tokens, TknType::Keyword(Kwrd::Recursive), &mut peek);
 
     let name;
-    tokens::expect_token(tokens, TknType::Keyword(Kwrd::Function), &mut peek)?;
+    tokens::expect_token(tokens, TknType::Keyword(Kwrd::Function), &mut peek).ok_or_soft(())?;
     if let Some(TknType::Identifier(ident)) = tokens.get(peek).map(|e| &e.token) {
         peek += 1;
         name = ident.clone();
     } else {
-        return None;
+        return FullResult::HardErr(ParserError::ExpectedIdentifier { tkn: &tokens[peek] });
     }
 
     let arg_tokens: &[Tkn];
     let body_tokens: &[Tkn];
     let mut start = peek;
     let mut end;
+    // since anonymous structs use curly braces we check for whenever types are declared for curly braces
+    // and because anonymous structs can be nested, we have to keep track of 
+    // how far down the rabbit hole we are
+    let mut parsing_type_level: usize = 0;
     loop {
-        if tokens::is_expected_token(tokens, TknType::Semicolon, &mut peek) {
-            end = peek - 1;
-            arg_tokens = &tokens[start..end];
-            body_tokens = &[];
-            *index = peek;
-            return Some(FunctionDefinition {
-                accessibility,
-                name,
-                mutable,
-                recursive,
-                arg_tokens,
-                body_tokens,
-            });
-        } else if tokens::is_expected_token(tokens, TknType::OpenCurlyBrace, &mut peek) {
+        if tokens::is_expected_token(tokens, TknType::OpenCurlyBrace, &mut peek) {
+            if parsing_type_level > 0 {
+                //Technically this should never happen in correct code
+                //However we pass this error down further in the parsing step
+                continue;
+            }
             peek -= 1;
             end = peek;
             arg_tokens = &tokens[start..end];
             start = peek;
             break;
-        } else if tokens::is_expected_token(tokens, TknType::Operation(Op::Arrow), &mut peek) {
-            end = peek - 1;
-            arg_tokens = &tokens[start..end];
-            start = peek;
-            //TODO: Add support for compound statements
-            loop {
-                if tokens::is_expected_token(tokens, TknType::Semicolon, &mut peek) {
-                    end = peek - 1;
-                    body_tokens = &tokens[start..=end];
-                    *index = peek;
-                    return Some(FunctionDefinition {
-                        accessibility,
-                        name,
-                        mutable,
-                        recursive,
-                        arg_tokens,
-                        body_tokens,
-                    });
-                }
-                peek += 1;
+        } else if tokens::is_expected_tokens(
+            tokens, 
+            &[TknType::Colon, TknType::OpenCurlyBrace], 
+            &mut peek
+        ) {
+            parsing_type_level += 1;
+            continue;
+        } else if tokens::is_expected_tokens(
+            tokens, 
+            &[TknType::Operation(Op::Assign), TknType::OpenCurlyBrace], 
+            &mut peek
+        ) {
+            parsing_type_level += 1; 
+            continue;
+        } else if tokens::is_expected_token(tokens, TknType::CloseCurlyBrace, &mut peek) {
+            if parsing_type_level == 0 {
+                //Technically this should never happen in correct code
+                //However we pass this error down further in the parsing step
+                continue;
             }
-        }
+
+            parsing_type_level -= 1;
+            continue;
+        } 
         peek += 1;
     }
     let mut count = 0;
@@ -220,36 +291,43 @@ pub fn define_function<'df>(
             if count > 1 {
                 count -= 1;
                 continue;
-            } else {
-                end = peek - 1;
-                body_tokens = &tokens[start..=end];
-                *index = peek;
-                return Some(FunctionDefinition {
-                    accessibility,
-                    name,
-                    mutable,
-                    recursive,
-                    arg_tokens,
-                    body_tokens,
-                });
-            }
+            } 
+
+            end = peek - 1;
+            body_tokens = &tokens[start..=end];
+            *index = peek;
+            return FullResult::Ok(FunctionDefinition {
+                accessibility,
+                name,
+                mutable,
+                recursive,
+                arg_tokens,
+                body_tokens,
+            });
         }
         peek += 1;
     }
 }
 
-pub fn define_arguments<'da>(
-    fn_param_bump: &'da FnParamBump,
-    tokens: &'da [Tkn],
+pub fn define_arguments<'tkns, 'bumps, 'defs>(
+    fn_param_bump: &'bumps FnParamBump,
+    tokens: &'tkns [Tkn],
     structs: &[&str],
-) -> Result<(&'da [FnParam<'da>], &'da [FnParam<'da>], ExprType), ParserError<'da>> {
+) -> Result<
+    (
+        &'bumps [FnParam<'tkns, 'bumps, 'defs>], 
+        &'bumps [FnParam<'tkns, 'bumps, 'defs>], 
+        ExprType
+    ), 
+    ParserError<'tkns, 'bumps, 'defs>
+> {
     let mut peek = 0;
-    let fn_params_1: &[FnParam];
-    let mut fn_params_2: &[FnParam];
+    let fn_params_left: &[FnParam];
+    let mut fn_params_right: &[FnParam];
     let mut return_type: ExprType = ExprType::Void;
-    let mut id: Option<FnType> = None;
+    let mut id: Option<(FnType, &Tkn)> = None;
 
-    if tokens::is_expected_tokens(
+    let is_expected_prefix = tokens::is_expected_tokens(
         tokens,
         &[
             TknType::OpenParen,
@@ -261,30 +339,38 @@ pub fn define_arguments<'da>(
         tokens,
         &[TknType::Dollar, TknType::Keyword(Kwrd::Prefix)],
         &mut peek,
-    ) || tokens::is_expected_token(tokens, TknType::Keyword(Kwrd::Prefix), &mut peek)
-    {
-        id = Some(FnType::Prefix);
-    }
-    fn_params_2 = fn_group_to_params(fn_param_bump, tokens, &mut peek, &structs);
+    ) || tokens::is_expected_token(tokens, TknType::Keyword(Kwrd::Prefix), &mut peek);
 
-    if let Some(FnType::Prefix) = id {
-        if tokens::is_expected_token(tokens, TknType::Colon, &mut peek) {
+    if is_expected_prefix {
+        id = Some((FnType::Prefix, &tokens[peek - 1]));
+    }
+
+    fn_params_right = fn_group_to_params(fn_param_bump, tokens, &mut peek, &structs)?;
+
+    if let Some((FnType::Prefix, id_token)) = id {
+        if tokens::is_expected_token(tokens, TknType::Operation(Op::Assign), &mut peek) {
             return_type = super::get_type_token_expr_type(
-                tokens::get_token(tokens, peek),
+                tokens,
                 &mut peek,
                 structs,
-            );
-            fn_params_1 = &[];
-            return Ok((fn_params_1, fn_params_2, return_type));
+            ).ok_or_else(|| ParserError::ExpectedType { tkn: &tokens[peek] })?;
+            fn_params_left = &[];
+            return Ok((fn_params_left, fn_params_right, return_type));
         } else if peek >= tokens.len() {
-            fn_params_1 = &[];
-            return Ok((fn_params_1, fn_params_2, return_type));
+            fn_params_left = &[];
+            return Ok((fn_params_left, fn_params_right, return_type));
         } else {
-            return Err(ParserError::new(&tokens[peek], "Expected end of argument definition"));
+            return Err(ParserError::DefinedIncorrectlyPlacedArgument { 
+                tkn: &tokens[peek], 
+                arg_type: FnType::Postfix,
+                fix_defined: id_token,
+                fix_type: FnType::Prefix 
+            });
         }
     }
 
-    if tokens::is_expected_tokens(
+    let start_fix = peek;
+    let is_expected_infix = tokens::is_expected_tokens(
         tokens,
         &[
             TknType::OpenParen,
@@ -296,35 +382,9 @@ pub fn define_arguments<'da>(
         tokens,
         &[TknType::Dollar, TknType::Keyword(Kwrd::Infix)],
         &mut peek,
-    ) || tokens::is_expected_token(tokens, TknType::Keyword(Kwrd::Infix), &mut peek)
-    {
-        if id != None {
-            return Err (ParserError::new(&tokens[peek - 1],
-                "function cannot be defined as infix, 
-                because it is already defined as prefix"
-            ));
-        }
-        //id = Some(FnType::Infix);
-        fn_params_1 = fn_params_2;
-        //fn_params_2 = vec![];
+    ) || tokens::is_expected_token(tokens, TknType::Keyword(Kwrd::Infix), &mut peek);
 
-        fn_params_2 = fn_group_to_params(&fn_param_bump, tokens, &mut peek, structs);
-        if tokens::is_expected_token(tokens, TknType::Colon, &mut peek) {
-            return_type = super::get_type_token_expr_type(
-                tokens::get_token(tokens, peek),
-                &mut peek,
-                structs,
-            );
-            return Ok((fn_params_1, fn_params_2, return_type));
-        } else if peek >= tokens.len() {
-            return Ok((fn_params_1, fn_params_2, return_type));
-        } else {
-            return Err(ParserError::new(
-                &tokens[peek],
-                "expected a colon, semicolon, or beginning of function body"
-            ));
-        }
-    } else if tokens::is_expected_tokens(
+    let is_expected_postfix = tokens::is_expected_tokens(
         tokens,
         &[
             TknType::OpenParen,
@@ -336,95 +396,129 @@ pub fn define_arguments<'da>(
         tokens,
         &[TknType::Dollar, TknType::Keyword(Kwrd::Postfix)],
         &mut peek,
-    ) || tokens::is_expected_token(tokens, TknType::Keyword(Kwrd::Postfix), &mut peek)
-    {
-        if id != None {
-            return Err(ParserError::new(
-                &tokens[peek - 1],
-                "function cannot be defined as postfix, 
-                because it is already defined as prefix"
-            ));
-        }
-        //id = Some(FnType::Postfix);
-        fn_params_1 = fn_params_2;
-        fn_params_2 = &[];
+    ) || tokens::is_expected_token(tokens, TknType::Keyword(Kwrd::Postfix), &mut peek);
 
-        if tokens::is_expected_token(tokens, TknType::Colon, &mut peek) {
+    if is_expected_infix {
+        if let Some((_, id_token)) = id {
+            return Err (ParserError::ConflictingFunctionFixDefinitions { 
+                tkn: &tokens[start_fix], 
+                fix_defined: id_token
+            });
+        }
+        fn_params_left = fn_params_right;
+
+        fn_params_right = fn_group_to_params(&fn_param_bump, tokens, &mut peek, structs)?;
+        if tokens::is_expected_token(tokens, TknType::Operation(Op::Assign), &mut peek) {
             return_type = super::get_type_token_expr_type(
-                tokens::get_token(tokens, peek),
+                tokens,
                 &mut peek,
                 structs,
-            );
-            return Ok((fn_params_1, fn_params_2, return_type));
+            ).ok_or_else(|| ParserError::ExpectedType { tkn: &tokens[peek] })?;
+            return Ok((fn_params_left, fn_params_right, return_type));
         } else if peek >= tokens.len() {
-            return Ok((fn_params_1, fn_params_2, return_type));
+            return Ok((fn_params_left, fn_params_right, return_type));
         } else {
-            return Err(ParserError::new(&tokens[peek], "expected end of argument definition"));
+            return Err(ParserError::ExpectedTokens { 
+                tkn: &tokens[peek],
+                received: tokens[peek..].iter().map(|tkn| &tkn.token), 
+                expected: &[TknType::Operation(Op::Assign), TknType::Colon, TknType::OpenCurlyBrace] 
+            });
         }
-    } else if tokens::is_expected_token(tokens, TknType::Colon, &mut peek) {
+    } else if is_expected_postfix {
+        if let Some((_, id_token)) = id {
+            return Err(ParserError::ConflictingFunctionFixDefinitions { 
+                tkn: &tokens[start_fix], 
+                fix_defined: id_token
+            });
+        }
+        fn_params_left = fn_params_right;
+        fn_params_right = &[];
+
+        if tokens::is_expected_token(tokens, TknType::Operation(Op::Assign), &mut peek) {
+            return_type = super::get_type_token_expr_type(
+                tokens,
+                &mut peek,
+                structs,
+            ).ok_or_else(|| ParserError::ExpectedType { tkn: &tokens[peek] })?;
+            return Ok((fn_params_left, fn_params_right, return_type));
+        } else if peek >= tokens.len() {
+            return Ok((fn_params_left, fn_params_right, return_type));
+        } else {
+            return Err(ParserError::DefinedIncorrectlyPlacedArgument{ 
+                tkn: &tokens[peek], 
+                arg_type: FnType::Prefix,
+                fix_defined: &tokens[start_fix],
+                fix_type: FnType::Postfix 
+            });
+        }
+    } else if tokens::is_expected_token(tokens, TknType::Operation(Op::Assign), &mut peek) {
         return_type = super::get_type_token_expr_type(
-            tokens::get_token(tokens, peek), 
+            tokens, 
             &mut peek, 
             structs
-        );
-        fn_params_1 = &[];
-        return Ok((fn_params_1, fn_params_2, return_type));
+        ).ok_or_else(|| ParserError::ExpectedType { tkn: &tokens[peek] })?;
+        fn_params_left = &[];
+        return Ok((fn_params_left, fn_params_right, return_type));
     } else if peek >= tokens.len() {
-        fn_params_1 = &[];
-        return Ok((fn_params_1, fn_params_2, return_type));
+        fn_params_left = &[];
+        return Ok((fn_params_left, fn_params_right, return_type));
     } else {
-        return Err(ParserError::new(&tokens[peek], "expected end of argument definition"));
+        return Err(ParserError::ExpectedEndOfFunctionDefinition { tkn: &tokens[peek - 1] });
     }
 }
 
-pub fn parse_function<'pf, 'hm, 'i>(
-    expr_bump: &'pf ExprBump,
-    stmt_bump: &'pf StmtBump,
-    functions: &'hm RefCell<HashMap<String, FullFunctionDefinition<'pf>>>,
-    variables: StackFrameDictAllocator<'i, String, VariableData<'i>>,
-    fn_def: FullFunctionDefinition<'pf>,
-    tokens: &'pf [Tkn<'pf>]
-) -> Result<Fun<'pf>, ParserError<'pf>> where 'pf: 'hm {
-    let FullFunctionDefinition {
-        accessibility, name, mutable, recursive, left_args, right_args, return_type
+pub fn parse_function<'tkns, 'bumps, 'defs>(
+    expr_bump: &'bumps ExprBump,
+    stmt_bump: &'bumps StmtBump,
+    structs: &'defs [Struct],
+    functions: &RefCell<HashMap<String, FullFnDef<'tkns, 'bumps, 'defs>>>,
+    variables: StackFrameDictAllocator<'_, String, VariableData<'tkns, 'bumps>>,
+    fn_def: FullFnDef<'tkns, 'bumps, 'defs>,
+    tokens: &'tkns [Tkn]
+) -> Result<Fun<'tkns, 'bumps, 'defs>, ParserError<'tkns, 'bumps, 'defs>> {
+    let FullFnDef {
+        accessibility, name, mutable, recursive, left_args, right_args, mut return_type
     } = fn_def;
 
     for arg in left_args {
         let variable_name = arg.param_name.as_ref().unwrap().clone();
         let param_type = arg.param_type.clone();
         
-        variables.push(variable_name, VariableData::new(false, ExprTypeCons::new_temp(param_type)));
+        variables.push(variable_name, VariableData::new(arg.tkn, false, ExprTypeCons::new(expr_bump, param_type)));
     }
 
     for arg in right_args {
         let variable_name = arg.param_name.as_ref().unwrap().clone();
         let param_type = arg.param_type.clone();
         
-        variables.push(variable_name, VariableData::new(false, ExprTypeCons::new_temp(param_type)));
+        variables.push(variable_name, VariableData::new(arg.tkn, false, ExprTypeCons::new(expr_bump, param_type)));
     }
 
     let mut peek = 0;
-    let mut stmts: Vec<&Stmt> = vec![];
-    let body_tokens = &tokens[1..tokens.len()];
+    let mut stmts: Vec<&StmtData> = vec![];
+    let body_tokens = &tokens[1..tokens.len()-1];
     {
         let variables = variables.new_frame();
         
         loop {
+            if peek >= body_tokens.len() {
+                break;
+            }
+            
             let stmt_possible = stmt::parse_statement(
                 expr_bump, 
                 stmt_bump, 
+                structs,
                 functions, 
                 &variables, 
                 body_tokens, 
+                &mut return_type,
                 &mut peek
             );
             match stmt_possible {
-                Ok(mut stmt) => {
-                    stmts.append(&mut stmt);
-                },
-                Err(_) => {
-                    break;
-                }
+                FullResult::Ok(mut stmt) => stmts.append(&mut stmt),
+                FullResult::SoftErr(_) => break,
+                FullResult::HardErr(err) => return Err(err)
             }
         }
 }
@@ -444,241 +538,87 @@ pub fn parse_function<'pf, 'hm, 'i>(
 
 pub fn expect_closing_group(
     tokens: &[Tkn], 
-    encapsulation: &Encapsulation, 
+    expect_closing: bool, 
     index: &mut usize
 ) -> bool {
-    if encapsulation == &Encapsulation::Parenthesis 
-        && tokens[*index].token == TknType::CloseParen
+    if expect_closing && tokens[*index].token == TknType::CloseParen
     {
         *index += 1;
         return true;
-    }
-    if encapsulation == &Encapsulation::Dollar 
-        && (tokens[*index].token == TknType::Dollar
-        || tokens[*index].token == TknType::Colon 
-        || tokens[*index].token == TknType::OpenCurlyBrace)
-    {
+    } else if !expect_closing && (
+        *index >= tokens.len() ||
+        tokens[*index].token == TknType::Dollar || 
+        tokens[*index].token == TknType::Operation(Op::Assign) || 
+        tokens[*index].token == TknType::OpenCurlyBrace ||
+        tokens[*index].token == TknType::Keyword(Kwrd::Infix) ||
+        tokens[*index].token == TknType::Keyword(Kwrd::Postfix)
+    ) {
         return true;
     }
     return false;
 }
 
-pub fn fn_group_to_params<'fp>(
-    fn_param_bump: &'fp FnParamBump,
-    tokens: &'fp [Tkn<'fp>],  
+pub fn fn_group_to_params<'tkns, 'bumps, 'defs>(
+    fn_param_bump: &'bumps FnParamBump,
+    tokens: &'tkns [Tkn],  
     index: &mut usize, 
     structs: &[&str]
-) -> &'fp [FnParam<'fp>] {
-    let mut fn_param: FnParam = FnParam::default();
+) -> Result<
+    &'bumps [FnParam<'tkns, 'bumps, 'defs>], 
+    ParserError<'tkns, 'bumps, 'defs>
+> {
     let mut fn_params: Vec<FnParam> = vec![];
-    let mut just_types: Option<ArgDef> = None;
-    let require_commas: bool;
 
-    let encapsulation: Encapsulation;
+    let expect_closing;
     if tokens::is_expected_token(tokens, TknType::OpenParen, index) {
-        encapsulation = Encapsulation::Parenthesis;
+        expect_closing = true;
     } else if tokens::is_expected_token(tokens, TknType::Dollar, index) {
-        encapsulation = Encapsulation::Dollar;
+        expect_closing = false;
     } else {
         *index += 1;
-        return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
+        return Ok(fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter()));
     }
 
-    let expr_type = super::get_type_token_expr_type(
-        tokens::get_token(tokens, *index), 
-        index, &structs
-    );
-    if expr_type != ExprType::Void {
-        fn_param.param_type = expr_type;
-    } else if let Some(Tkn {
-        token: TknType::Identifier(ident), ..
-    }) = tokens::get_token(tokens, *index) {
+    let mut require_comma = false;
+    loop {
+        if expect_closing_group(tokens, expect_closing, index) {
+            return Ok(fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter()));
+        }
+        
+        if require_comma {
+            return Err(ParserError::ExpectedToken {
+                tkn: &tokens[*index],
+                expected: TknType::Comma
+            });
+        }
+        
+        let Some(TknType::Identifier(ident)) = tokens::get_token(tokens, *index).map(|e| &e.token) else {
+            return Err(ParserError::ExpectedIdentifier { tkn: &tokens[*index] });
+        };
+        let tkn = &tokens[*index];
+
         *index += 1;
-        fn_param.param_name = Some(ident.clone());
-        fn_params.push(fn_param.clone());
-        fn_param = FnParam::default();
-        just_types = Some(ArgDef::JustIdents);
-    } else if encapsulation == Enc::Parenthesis 
-        && tokens::is_expected_token(tokens, TknType::CloseParen, index) 
-    {
-        return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
-    } else {
-        panic!("unexpected token {:?}, expected type, identifier or )", tokens::get_token(tokens, *index));
-    }
 
-    if encapsulation == Enc::Parenthesis 
-        && tokens::is_expected_token(tokens, TknType::CloseParen, index) 
-    {
-        if just_types == None {
-            //just_types = Some(ArgDef::JustTypes); 
-        }
-        fn_params.push(fn_param.clone());
-        //fn_param = FnParam::default();
-        return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
-    }
+        tokens::expect_token(tokens, TknType::Colon, index)
+            .expect(format!("Expected Colon at {}", tokens[*index]).as_str());
 
-    if tokens::is_expected_token(tokens, TknType::Comma, index) {
-        if just_types == None { 
-            just_types = Some(ArgDef::JustTypes); 
-            fn_params.push(fn_param.clone());
-            fn_param = FnParam::default();
-        }
-        require_commas = true;
-    } else {
-        require_commas = false;
-    }
-
-    if just_types == None {
         let expr_type = super::get_type_token_expr_type(
-            tokens::get_token(tokens, *index), 
-            index, &structs
-        );
-        if expr_type != ExprType::Void {
-            fn_params.push(fn_param.clone());
-            fn_param = FnParam::default();
+            tokens, 
+            index, 
+            &structs
+        ).expect(format!("Expected Type at {}", tokens[*index - 1]).as_str());
 
-            fn_param.param_type = expr_type;
-            just_types = Some(ArgDef::JustTypes);
-        } else if let Some(Tkn {
-            token: TknType::Identifier(ident), ..
-        }) = tokens::get_token(tokens, *index) {
-            *index += 1;
-            fn_param.param_name = Some(ident.clone());
+        let fn_param = FnParam {
+            tkn,
+            param_type: expr_type,
+            param_name: Some(ident.clone()),
+            param_default: None,
+        };
 
-            //check for default value
+        fn_params.push(fn_param);
 
-            just_types = Some(ArgDef::Both);
+        if !tokens::is_expected_token(tokens, TknType::Comma, index) {
+            require_comma = true;
         }
-
-        fn_params.push(fn_param.clone());
-        fn_param = FnParam::default();
     }
-    
-    if just_types == Some(ArgDef::JustTypes) {
-        loop {
-            if require_commas {
-                let comma = tokens::is_expected_token(
-                    tokens, 
-                    TknType::Comma, 
-                    index
-                );
-                if expect_closing_group(
-                    tokens,  
-                    &encapsulation, 
-                    index
-                ) {
-                    
-                    return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
-                }
-                if !comma {panic!("expected comma at {}", *index);}
-            } else if tokens::is_expected_token(tokens, TknType::Comma, index)  { 
-                panic!("invalid comma at {}", *index);
-            }
-            let expr_type = super::get_type_token_expr_type(
-                tokens::get_token(tokens, *index), 
-                index, &structs
-            );
-            if expr_type != ExprType::Void {
-                fn_param.param_type = expr_type;
-            } else if expect_closing_group(
-                tokens, 
-                &encapsulation, 
-                index
-            ) {
-                return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
-            } else {
-                panic!("unexpected token {}, was expecting type", tokens[*index]);
-            }
-
-            fn_params.push(fn_param.clone());
-            fn_param = FnParam::default();
-        }
-    } else if just_types == Some(ArgDef::JustIdents) {
-        loop {
-            if require_commas {
-                let comma = tokens::is_expected_token(tokens, TknType::Comma, index);
-                if expect_closing_group(
-                    tokens, 
-                    &encapsulation, 
-                    index
-                ) {
-                    return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
-                }
-                if !comma {panic!("expected comma at {}", *index);}
-            } else if tokens::is_expected_token(tokens, TknType::Comma, index) { 
-                panic!("invalid comma at {}", *index);
-            }
-            
-            if let Some(ident) = super::get_ident_token_string(
-                tokens::get_token(tokens, *index), 
-                index, &structs) 
-            {
-                fn_param.param_name = Some(ident.clone());
-            } else if expect_closing_group(
-                tokens,  
-                &encapsulation, 
-                index
-            ) {
-                return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
-            } else {
-                panic!("unexpected token {:?}, expected identifier, not type", tokens::get_token(tokens, *index - 1));
-            }
-
-            fn_params.push(fn_param.clone());
-            fn_param = FnParam::default();
-        }
-    } else if just_types == Some(ArgDef::Both) {
-        loop {
-            if require_commas {
-                let comma = tokens::is_expected_token(tokens, TknType::Comma, index);
-                if expect_closing_group(
-                    tokens, 
-                    &encapsulation, 
-                    index
-                ) {
-                    return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
-                }
-                if !comma {panic!("expected comma at {}", *index);}
-            } else if tokens::is_expected_token(tokens, TknType::Comma, index) { 
-                panic!("invalid comma at {}", *index);
-            }
-
-            let expr_type = super::get_type_token_expr_type(
-                tokens::get_token(tokens, *index), 
-                index, &structs
-            );
-            if expr_type != ExprType::Void {
-                fn_param.param_type = expr_type;
-            } else if expect_closing_group(
-                tokens, 
-                &encapsulation, 
-                index
-            ) {
-                return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
-            } else {
-                panic!("unexpected token {}, was expecting type", tokens[*index]);
-            }
-
-            if let Some(ident) = super::get_ident_token_string(
-                tokens::get_token(tokens, *index), 
-                index, &structs)
-            {
-                fn_param.param_name = Some(ident);
-            } else if expect_closing_group(
-                tokens, 
-                &encapsulation, 
-                index
-            ) {
-                return fn_param_bump.alloc_slice_fill_iter(fn_params.into_iter());
-            } else {
-                panic!("unexpected token {}, expected identifier, not type", tokens[*index]);
-            }
-
-            //check for default value
-
-            fn_params.push(fn_param.clone());
-            fn_param = FnParam::default();
-        } 
-    }
-    unreachable!();
 }

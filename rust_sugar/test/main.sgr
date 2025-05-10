@@ -1,18 +1,10 @@
-pub fn add $ i32 a $ infix $ i32 b : i32 {
-    let c = a;
-    let d = b;
-
-    return c + d;
-}
-
-pub fn foo $ i32 a i32 b $ infix $ i32 c : i32 {
-    return a + b * c;
-}
-
-pub fn square $ i32 a $ postfix : i32 {
-    return a * a;
-}
-
-pub fn main {
-    let a = 1 + (2 3 foo 3 square) square;
+pub fn main  {
+    print_string "pick a number between 0 and 10: ";
+    let mut input = read_i32;
+    while !input.success || input.value < 0 || input.value > 10 {
+        print_string "\nThat's an invalid input.  Try again!\n";
+        print_string "pick a number between 0 and 10: ";
+        input = read_i32;
+    }
+    print_string "\nI picked 11, my number is higher :P!\n";
 }

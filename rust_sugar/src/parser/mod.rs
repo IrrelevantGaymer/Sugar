@@ -3,16 +3,20 @@ use std::{cell::RefCell, collections::HashMap, ops::Deref};
 use accessors::{Accessor, AccessorDefinition};
 use bumpalo::Bump;
 use expr::{ExprType, VariableData};
-use functions::{FullFunctionDefinition, Fun, Function, FunctionDefinition};
+use functions::{define_function, FullFunctionDefinition, Fun, FunctionDefinition};
+use once_cell::sync::OnceCell;
+use parser_error::ParserError;
 use stack_frame_allocators::stack_frame_dict_allocator::StackFrameDictAllocator;
 use structs::{Struct, StructDefinition};
 
-use crate::lexer::token::{Tkn, TknType};
+use crate::{full_result::FullResult, lexer::token::{Tkn, TknType}};
 
 pub mod accessors;
 pub mod expr;
 pub mod functions;
 pub mod operators;
+pub mod parser_error;
+pub mod patterns;
 pub mod stmt;
 pub mod structs;
 pub mod tokens;
@@ -20,39 +24,6 @@ pub mod tokens;
 pub type ExprBump = ExpressionBumpAllocator;
 pub type StmtBump = StatementBumpAllocator;
 pub type FnParamBump = FunctionParameterBumpAllocator;
-
-#[derive(Debug)]
-pub struct ParserErrorAccumulator<'pea> {
-    errors: Vec<ParserError<'pea>>
-}
-
-impl<'pea> ParserErrorAccumulator<'pea> {
-    pub fn new() -> Self {
-        ParserErrorAccumulator { errors: vec![] }
-    }
-
-    pub fn push(&mut self, error: ParserError<'pea>) {
-        self.errors.push(error);
-    }
-}
-
-#[derive(Debug)]
-pub struct ParserError<'pe> {
-    pub token: &'pe Tkn<'pe>,
-    pub msg: &'static str
-}
-
-impl<'pe> ParserError<'pe> {
-    pub fn new(token: &'pe Tkn, msg: &'static str) -> Self {
-        ParserError {token, msg}
-    }
-}
-
-impl<'pe> Into<ParserErrorAccumulator<'pe>> for ParserError<'pe> {
-    fn into(self) -> ParserErrorAccumulator<'pe> {
-        ParserErrorAccumulator {errors: vec![self]}
-    }
-}
 
 pub struct ExpressionBumpAllocator(Bump);
 
@@ -102,19 +73,18 @@ impl Deref for FnParamBump {
     }
 }
 
-pub fn parse<'t>(
-    expr_bump: &'t ExprBump,
-    stmt_bump: &'t StmtBump,
-    fn_param_bump: &'t FnParamBump,
-    tokens: &'t [Tkn<'t>]
-) -> Result<(
-    Vec<Accessor>, 
-    Vec<Struct>, 
-    Vec<Function<'t>>
-), Vec<ParserError<'t>>> {
+pub fn parse<'tkns, 'bumps, 'defs>(
+    expr_bump: &'bumps ExprBump,
+    stmt_bump: &'bumps StmtBump,
+    fn_param_bump: &'bumps FnParamBump,
+    accessors: &'defs OnceCell<Box<[Accessor]>>,
+    structs: &'defs OnceCell<Box<[Struct]>>,
+    functions: &'defs OnceCell<Box<[Fun<'tkns, 'bumps, 'defs>]>>,
+    tokens: &'tkns [Tkn]
+) -> Result<(), Vec<ParserError<'tkns, 'bumps, 'defs>>> {
     let mut errors: Vec<ParserError> = vec![];
 
-    let functions = RefCell::new(HashMap::new());
+    let function_data = RefCell::new(HashMap::new());
     let variables = StackFrameDictAllocator::<String, VariableData>::new();
     
     let mut accessor_defs: Vec<AccessorDefinition> = vec![];
@@ -123,47 +93,44 @@ pub fn parse<'t>(
 
     let mut index: usize = 0;
     while index < tokens.len() {
-        if let Some(def) = accessors::define_accessor(tokens, &mut index) {
-            accessor_defs.push(def);
-        } else if let Some(def) = structs::define_struct(tokens, &mut index) {
-            struct_defs.push(def);
-        } else if let Some(def) = functions::define_function(tokens, &mut index) {
-            function_defs.push(def);
-        } else if tokens::is_expected_token(tokens, TknType::EndOfFile, &mut index) {
+        match accessors::define_accessor(tokens, &mut index) {
+            FullResult::Ok(def) => {
+                accessor_defs.push(def);
+                continue;
+            },
+            FullResult::SoftErr(()) => (),
+            FullResult::HardErr(error) => return Err(error)
+        }
+        match structs::define_struct(tokens, &mut index) {
+            FullResult::Ok(def) => {
+                struct_defs.push(def);
+                continue;
+            },
+            FullResult::SoftErr(()) => (),
+            FullResult::HardErr(error) => return Err(error)
+        }
+        match define_function(tokens, &mut index) {
+            FullResult::Ok(def) => {
+                function_defs.push(def);
+                continue;
+            },
+            FullResult::SoftErr(()) => (),
+            FullResult::HardErr(error) => return Err(vec![error])
+        }
+
+        if tokens::is_expected_token(tokens, TknType::EndOfFile, &mut index) {
             break;
         } else {
-            errors.push(ParserError::new(&tokens[index], "Could not parse token {}"));
+            errors.push(ParserError::InvalidBlock{ tkn: &tokens[index] });
+            eprintln!("accessors: {accessor_defs:#?}, structs: {struct_defs:#?}, functions: {function_defs:#?}");
             return Err(errors);
         }
     }
-    /*
-    let mut data_file = OpenOptions::new()
-        .append(true)
-        .open("test/parse.txt")
-        .expect("cannot open file");
 
-    data_file
-        .write(format!("defined accessors:\n{accessor_def:?}\n\n").as_bytes())
-        .expect("write failed!");
-    data_file
-        .write(format!("defined structs:\n{struct_def:?}\n\n").as_bytes())
-        .expect("write failed!");
-    data_file
-        .write(format!("defined functions:\n{function_def:?}\n\n").as_bytes())
-        .expect("write failed!");
-    */
-
-    // dbg!(&accessor_defs);
-    // dbg!(&struct_defs);
-    // dbg!(&function_defs);
-
-    let mut full_function_defs: Vec<FullFunctionDefinition> = vec![];
-    let mut def_functions: Vec<Fun> = vec![];
-
-    let accessors = accessor_defs.iter()
-    .map(|AccessorDefinition {name, ..}|
-        name.as_str()
-    ).collect::<Vec<&str>>();
+    let accessor_names = accessor_defs.iter()
+        .map(|AccessorDefinition {name, ..}|
+            name.as_str()
+        ).collect::<Vec<&str>>();
 
     let struct_names = struct_defs
         .iter()
@@ -172,10 +139,27 @@ pub fn parse<'t>(
         })
         .collect::<Vec<&str>>();
 
-    let mut structs: Vec<Struct> = vec![];
-    let mut full_accessors: Vec<Accessor> = vec![];
+    let mut accessor_buffer = vec![];
+    for i in &accessor_defs {
+        match accessors::parse_accessor(i) {
+            Ok(accessor) => accessor_buffer.push(accessor),
+            Err(ref mut err) => errors.append(err)
+        }
+    }
+    accessors.set(accessor_buffer.into_boxed_slice()).unwrap();
 
-    //index = 0;
+    let mut struct_buffer = vec![];
+    for struct_def in &struct_defs {
+        match structs::parse_struct(
+            struct_def, &accessor_names, &struct_names
+        ) {
+            Ok(structure) => struct_buffer.push(structure),
+            Err(err) => errors.push(err),
+        };
+    }
+    structs.set(struct_buffer.into_boxed_slice()).unwrap();
+
+    let mut full_function_defs = vec![];
     for function_def in function_defs {
         let (
             full_function_def, 
@@ -183,7 +167,7 @@ pub fn parse<'t>(
         ) = match FullFunctionDefinition::from_partial_fn_def(
             &fn_param_bump, 
             function_def, 
-            &accessors, 
+            &accessor_names, 
             &struct_names
         ) {
             Ok((full_function_def, body_tokens)) => (full_function_def, body_tokens),
@@ -193,16 +177,20 @@ pub fn parse<'t>(
             }
         };
 
-        functions.borrow_mut().insert(full_function_def.name.clone(), full_function_def.clone());
-                
+        function_data.borrow_mut().insert(full_function_def.name.clone(), full_function_def.clone());
+        full_function_defs.push((full_function_def, body_tokens));
+    }
+
+    let mut function_buffer = vec![];
+    for (full_function_def, body_tokens) in full_function_defs {
         if body_tokens.is_empty() {
-            full_function_defs.push(full_function_def);
+            continue;
         } else {
-            //println!("parsing function {}", &full_function_def.name);
             let function = match functions::parse_function(
                 &expr_bump, 
                 &stmt_bump, 
-                &functions, 
+                structs.get().unwrap(),
+                &function_data, 
                 variables.new_frame(), 
                 full_function_def, 
                 body_tokens
@@ -213,78 +201,86 @@ pub fn parse<'t>(
                     continue;
                 }
             };
-            // let function = match functions::parse_function(
-            //     &expr_bump, 
-            //     &stmt_bump, 
-            //     &functions, 
-            //     variables.new_frame(), 
-            //     full_function_def, 
-            //     body_tokens
-            // ) {
-            //     Ok(function) => {
-            //         println!("got function");
-            //         function
-            //     },
-            //     Err(ParserError{token, msg}) => panic!("{msg} at {token}")
-            // };
-            //println!("parsed function");
-            def_functions.push(function);
-            //println!("pushed function");
+            function_buffer.push(function);
         }
     }
 
-    for i in &struct_defs {
-        match structs::parse_struct(
-            i, &accessors, &struct_names
-        ) {
-            Ok(structure) => structs.push(structure),
-            Err(err) => errors.push(err),
-        };
-    }
-
-    for i in &accessor_defs {
-        match accessors::parse_accessor(i) {
-            Ok(accessor) => full_accessors.push(accessor),
-            Err(ref mut err) => errors.append(err)
-        }
-    }
-
-    //dbg!(def_functions);
-    //dbg!(structs);
-
+    functions.set(function_buffer.into_boxed_slice()).unwrap();
+    
     if errors.is_empty() {
-        return Ok((full_accessors, structs, def_functions));
+        return Ok(());
     }
     return Err(errors);
-    /*
-    data_file
-        .write(format!("function definitions:\n{function_defs:?}\n\n").as_bytes())
-        .expect("write failed!");
-    data_file
-        .write(format!("function declarations:\n{functions:?}\n\n").as_bytes())
-        .expect("write failed!");
-    */
-
-
 }
 
-pub fn get_type_token_expr_type(
-    token: Option<&Tkn>, 
-    index: &mut usize, 
-    structs: &[&str]
-) -> ExprType {
-    if let Some(Tkn {token: TknType::Type(typ), ..}) = token {
+pub fn get_type(
+    tokens: &[Tkn],
+    index: &mut usize,
+    structs: &[Struct]
+) -> Option<ExprType> {
+    if let Some(Tkn {token: TknType::Type(typ), ..}) = tokens.get(*index) {
         *index += 1;
-        return typ.to_expr_type();
-    } else if let Some(Tkn {token: TknType::Identifier(typ), ..}) = token {
+        return Some(typ.to_expr_type());
+    } else if let Some(Tkn {token: TknType::Identifier(typ), ..}) = tokens.get(*index) {
         for i in structs {
-            if typ == i {
+            if *typ == i.name {
                 *index += 1;
-                return ExprType::Custom {ident: typ.clone()};
+                return Some(ExprType::Custom {ident: typ.clone()});
             }
         }
     }
-    return ExprType::Void;
+    return None;
+}
+
+pub fn get_type_token_expr_type(
+    tokens: &[Tkn], 
+    index: &mut usize, 
+    structs: &[&str]
+) -> Option<ExprType> {
+    let mut peek = *index;
+    if let Some(TknType::Type(typ)) = tokens.get(peek).map(|e| &e.token) {
+        peek += 1;
+        *index = peek;
+        return Some(typ.to_expr_type());
+    } else if let Some(TknType::Identifier(typ)) = tokens.get(peek).map(|e| &e.token) {
+        for i in structs {
+            if typ == *i {
+                peek += 1;
+                *index = peek;
+                return Some(ExprType::Custom {ident: typ.clone()});
+            }
+        }
+    } else if let Some(TknType::OpenCurlyBrace) = tokens.get(peek).map(|e| &e.token) {
+        peek += 1;
+        let mut fields = vec![];
+        let mut need_comma = false;
+        loop {
+            if tokens::is_expected_token(tokens, TknType::CloseCurlyBrace, &mut peek) {
+                return Some(ExprType::AnonymousCustom { fields: fields.into_boxed_slice() });
+            }
+
+            if need_comma {
+                eprintln!("comma");
+                return None;
+            }
+
+            let Some(TknType::Identifier(ident)) = tokens.get(peek).map(|e| &e.token) else {
+                return None;
+            };
+            peek += 1;
+
+            tokens::expect_token(tokens, TknType::Colon, &mut peek)?;
+
+            let field_type = get_type_token_expr_type(tokens, &mut peek, structs)?;
+
+            fields.push((ident.clone(), field_type));
+
+            if !tokens::is_expected_token(tokens, TknType::Comma, &mut peek) {
+                need_comma = true;
+            }
+        }
+    }
+    return None;
 }
 
 pub fn get_ident_token_string(

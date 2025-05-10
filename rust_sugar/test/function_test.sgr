@@ -1,41 +1,43 @@
-pub mut rec fn DoThing1 prefix $ a b : i32;
-
-pub mut rec fn DoThing1a $ prefix $ i32 a, i32 b : i32 {
-
+pub mut rec fn DoThing1a $ prefix $ a: i32, b: i32 = i32 {
+    return a + b;
 }
 
-pub mut rec fn DoThing1b (prefix) (i32 a, i32 b) : i32 {
-
+pub mut rec fn DoThing1b (prefix) (a: i32, b: i32) = i32 {
+    return a + b;
 }
 
-pub mut rec fn DoThing1c prefix $ i32 a i32 b : i32 {
-
+pub mut rec fn DoThing1c prefix $ a: i32, b: i32 = i32 {
+    return a + b;
 }
 
-pub mut rec fn DoThing2a $ i32 a $ infix $ i32 b : i32 {
-
+pub mut rec fn DoThing2a $ a: i32 $ infix $ b: i32 = i32 {
+    return a + b;
 }
 
-pub mut rec fn DoThing2b (i32 a) (infix) (i32 b) : i32 {
-
+pub mut rec fn DoThing2b (a: i32) (infix) (b: i32) = i32 {
+    return a + b;
 }
 
-pub mut rec fn DoThing2c (i32 a) infix (i32 b) : i32 {
-
+pub mut rec fn DoThing2c $ a: i32 infix $ b: i32 = i32 {
+    return a + b;
 }
 
-pub mut rec fn DoThing3a $ i32 a, i32 b $ postfix : i32 {
-
+pub mut rec fn DoThing3a $ a: i32, b: i32 $ postfix = i32 {
+    return a + b;
 }
 
-pub mut rec fn Basic1 (i32 a, i32 b) : i32 {
-
+pub mut rec fn DoThing3b (a: i32, b: i32) (postfix) = i32 {
+    return a + b;
 }
 
-pub mut rec fn Basic2 $ i32 a, i32 b : i32 {
-
+pub mut rec fn DoThing3c $ a: i32, b: i32 postfix = i32 {
+    return a + b;
 }
 
-pub mut rec fn Basic3 $ i32 i32 $ a b : i32 {
-    
+pub mut rec fn Basic1 (a: i32, b: i32) = i32 {
+    return a + b;
+}
+
+pub mut rec fn Basic2 $ a: i32, b: i32 = i32 {
+    return a + b;
 }

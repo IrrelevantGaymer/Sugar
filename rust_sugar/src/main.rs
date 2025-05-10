@@ -4,23 +4,24 @@
 use std::env;
 use std::fs;
 
-use sugar::lexer::token::Token;
-use sugar::parser;
-use sugar::lexer;
-use sugar::parser::accessors::Accessor;
-use sugar::parser::expr::ExprData;
-use sugar::parser::expr::Lit;
-use sugar::parser::functions::Fun;
-use sugar::parser::functions::FunctionParamater;
-use sugar::parser::operators::BinOp;
-use sugar::parser::operators::UnOp;
-use sugar::parser::structs::Field;
-use sugar::parser::structs::Struct;
-use sugar::parser::ExprBump;
-use sugar::parser::FnParamBump;
-use sugar::parser::ParserError;
-use sugar::parser::StmtBump;
-use sugar::string_utils::StringUtils;
+use once_cell::sync::OnceCell;
+use sugar::interpreter;
+use sugar::{
+    lexer::{
+        self, 
+        //token::Token
+    }, 
+    parser::{
+        self, 
+        accessors::Accessor, 
+        functions::{Fun, FnParam},
+        structs::{Field, Struct},
+        ExprBump,
+        StmtBump,
+        FnParamBump,
+        //ParserError,
+    }
+};
 
 fn main() {
     let args = env::args().collect::<Vec<_>>();
@@ -31,6 +32,7 @@ fn main() {
         Some("lex") => Command::Lex,
         Some("parse") => Command::Parse,
         Some("help") | None => Command::Help,
+        Some("interpret") => Command::Interpret,
         Some("build") => Command::Build,
         Some("run") => Command::Run,
         Some(command) => {
@@ -57,23 +59,23 @@ fn main() {
 
     while index  < args.len() {
         match args[index].as_str() {
-            "--minimal" => if settings.lexer_settings.message_setting != LexerMessageSetting::Default {
+            "--minimal" => if settings.message_settings != MessageSetting::Default {
                 println!(
                     "cannot apply flag --minimal because lexer message setting is already defined as {:?}", 
-                    settings.lexer_settings.message_setting
+                    settings.message_settings
                 );
                 return;
             } else {
-                settings.lexer_settings.message_setting = LexerMessageSetting::Minimal;
+                settings.message_settings = MessageSetting::Minimal;
             },
-            "--verbose" => if settings.lexer_settings.message_setting != LexerMessageSetting::Default {
+            "--verbose" => if settings.message_settings != MessageSetting::Default {
                 println!(
                     "cannot apply flag --verbose because lexer message setting is already defined as {:?}", 
-                    settings.lexer_settings.message_setting
+                    settings.message_settings
                 );
                 return;
             } else {
-                settings.lexer_settings.message_setting = LexerMessageSetting::Verbose;
+                settings.message_settings = MessageSetting::Verbose;
             },
             arg => {
                 println!("could not recognize flag {}", arg);
@@ -90,6 +92,7 @@ fn main() {
                 "\tlex - Tokenizes the provided file paths, returning the tokens for debug purposes.\n",
                 "\tparse - Parses the provided file paths, returning the AST for debug purposes.\n",
                 "\thelp - Prints out a list of commands w/ descriptions.  Also shows flags and command format for specific commands\n",
+                "\tinterpret - Uses the built-in interpreter to run the provided file paths\n",
                 "\tbuild - Compiles and builds the provided file paths into an executable.\n",
                 "\trun - JIT Compiles and builds the provided file paths, running the program.\n"
             )),
@@ -101,7 +104,9 @@ fn main() {
             )),
             Some("parse") => println!("{}", concat!(
                 "Parses the provided file paths, returning the AST for debug purposes.\n",
-                "No provided flags:\n",
+                "Provided flags:\n",
+                "\t--minimal - prints the lexed tokens with minimal information\n",
+                "\t--verbose - prints the lexed tokens with all their information\n"
             )),
             Some("build") => println!("not implemented yet\n"),
             Some("run") => println!("not implemented yet \n"),
@@ -121,6 +126,7 @@ fn main() {
     match command {
         Command::Lex => lex(files, settings),
         Command::Parse => parse(files, settings),
+        Command::Interpret => interpret(files, settings),
         Command::Build => println!("not implemented yet"),
         Command::Run => println!("not implemented yet"),
         Command::Help => unreachable!()
@@ -131,41 +137,29 @@ fn main() {
 
 #[derive(PartialEq)]
 pub enum Command {
-    Lex, Parse, Help, Build, Run, 
+    Lex, Parse, Help, Interpret, Build, Run, 
 }
 
 pub struct Settings {
-    lexer_settings: LexerSettings,
+    message_settings: MessageSetting,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            lexer_settings: Default::default()
-        }
-    }
-}
-
-pub struct LexerSettings {
-    message_setting: LexerMessageSetting,
-}
-
-impl Default for LexerSettings {
-    fn default() -> Self {
-        LexerSettings { 
-            message_setting: Default::default()    
+            message_settings: Default::default()
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub enum LexerMessageSetting {
+pub enum MessageSetting {
     Minimal, Verbose, Default
 }
 
-impl Default for LexerMessageSetting {
+impl Default for MessageSetting {
     fn default() -> Self {
-        LexerMessageSetting::Default
+        MessageSetting::Default
     }
 }
 
@@ -175,22 +169,22 @@ fn lex(filepaths: Vec<&str>, settings: Settings) {
     let mut lexer = lexer::tokenize::Lexer::new(&filepath, &contents);
     let tokens = lexer.tokenize();
 
-    match settings.lexer_settings.message_setting {
-        LexerMessageSetting::Default |
-        LexerMessageSetting::Minimal => {
+    match settings.message_settings {
+        MessageSetting::Default |
+        MessageSetting::Minimal => {
             print!("[");
             for token in tokens {
                 print!("{}, ", token.token);
             }
             println!("]");
         },
-        LexerMessageSetting::Verbose => {
+        MessageSetting::Verbose => {
             println!("{tokens:#?}");
         }
     }
 }
 
-fn parse(filepaths: Vec<&str>, _settings: Settings) {
+fn parse(filepaths: Vec<&str>, settings: Settings) {
     let filepath = filepaths.first().unwrap();
     let contents = fs::read_to_string(filepath).unwrap();
     let mut lexer = lexer::tokenize::Lexer::new(&filepath, &contents);
@@ -200,244 +194,151 @@ fn parse(filepaths: Vec<&str>, _settings: Settings) {
     let stmt_bump = StmtBump::new();
     let fn_param_bump = FnParamBump::new();
 
-    match parser::parse(&expr_bump, &stmt_bump, &fn_param_bump, &tokens) {
-        Ok((accessors, structs, functions)) => {
-            println!("parsed accessors:\n");
-            for Accessor { name, whitelist, blacklist } in accessors {
-                print!("{name} whitelists [");
-                for white in whitelist {
-                    print!("{white}, ");
-                }
-                print!("] and blacklists [");
-                for black in blacklist {
-                    print!("{black}, ");
-                }
-                println!("]");
-            }
-            print!("\n");
+    let accessors = OnceCell::new();
+    let structs = OnceCell::new();
+    let functions = OnceCell::new();
 
-            println!("parsed structs:\n");
-            for Struct { accessibility, location: _, name, fields } in structs {
-                println!("{name} with {accessibility} accessibility and fields {{");
-                for Field { accessibility, field_name, field_type } in fields {
-                    println!("\t{field_name} of type {field_type:?} and accessibility {accessibility},");
-                }
-                println!("}}")
-            }
-            print!("\n");
-
-            println!("parsed functions:\n");
-            for Fun { 
-                accessibility, 
-                location: _, 
-                name, 
-                mutable, 
-                recursive, 
-                left_args, 
-                right_args, 
-                return_type, 
-                body 
-            } in functions {
-                print!(
-                    "{}{}function {name} with accessibility {accessibility} and left args [", 
-                    if mutable {"mutable "} else {""}, 
-                    if recursive {"recursive "} else {""},
-                );
-                for FunctionParamater { param_name, param_type, param_default: _ } in left_args {
-                    print!("{} of type {param_type:?}, ", param_name.as_ref().unwrap());
-                }
-                print!("] and right args [");
-                for FunctionParamater { param_type, param_name, param_default: _ } in right_args {
-                    print!("{} of type {param_type:?}, ", param_name.as_ref().unwrap());
-                }
-                println!("] and return type {return_type:?} and statements {{");
-                for stmt in body {
-                    println!("\t{stmt:?},");
-                }
-                println!("}}\n");
-            }
-            print!("\n");
-        },
-        Err(errors) => for ParserError { 
-            token: Token { token: _, file_name, line_index, line_number }, 
-            msg 
-        } in errors {
-            println!("error: {msg} in {file_name} on line {line_number}, col {line_index}\n");
-            let line = get_line_from_contents(*line_number, contents.as_str());
-            let col_offset = num_whitespace(line);
-            println!("{}", get_line_from_contents(*line_number, contents.as_str()).trim());
-            println!("{}^", " ".repeat(col_offset));
-            println!("\nrecommendations for errors not implemented yet\n");
-        }
-    };
-}
-
-fn get_line_from_contents(line_number: usize, contents: &str) -> &str {
-    let mut index = 0;
-    for _ in 1..line_number {
-        while let Some(chr) = contents.chars().nth(index) && chr != 'n' {
-            index += 1;
-        }
-        index += 1;
-    }
-
-    let mut len = 0;
-    while let Some(chr) = contents.chars().nth(index + len) && chr != '\n' {
-        len += 1;
-    }
-
-    return contents.substring(index, len);
-}
-
-fn num_whitespace(line: &str) -> usize {
-    let mut len = 0;
-
-    for chr in line.chars() {
-        if chr.is_whitespace() {
-            len += 1;
-            continue;
-        }
-        break;
-    }
-
-    return len;
-}
-
-#[allow(dead_code)]
-fn eval<'e>(bump: &'e bumpalo::Bump, expr: &'e ExprData) -> &'e ExprData<'e> {
-    if let ExprData::BinaryOp(op, left, right) = expr {
-        let left_expr = eval(bump, left);
-        let right_expr = eval(bump, right);
-        match op {
-            BinOp::Exponent => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    if *num2 < 0 {
-                        return bump.alloc(ExprData::Literal(Lit::FloatLiteral((*num1 as f64).powf(*num2 as f64))));
+    match settings.message_settings {
+        MessageSetting::Default |
+        MessageSetting::Minimal => {
+            match parser::parse(
+                &expr_bump, &stmt_bump, &fn_param_bump, 
+                &accessors, &structs, &functions, 
+                &tokens
+            ) {
+                Ok(()) => {
+                    println!("parsed accessors:\n");
+                    for Accessor { ref name, ref whitelist, ref blacklist } in accessors.get().unwrap() {
+                        print!("{name} whitelists [");
+                        for white in whitelist {
+                            print!("{white}, ");
+                        }
+                        print!("] and blacklists [");
+                        for black in blacklist {
+                            print!("{black}, ");
+                        }
+                        println!("]");
                     }
-                    return bump.alloc(ExprData::Literal(Lit::IntegerLiteral(num1.pow(*num2 as u32))));
+                    print!("\n");
+        
+                    println!("parsed structs:\n");
+                    for Struct { accessibility, location: _, name, fields } in structs.get().unwrap() {
+                        println!("{name} with {accessibility} accessibility and fields {{");
+                        for Field { accessibility, field_name, field_type } in fields {
+                            println!("\t{field_name} of type {field_type:?} and accessibility {accessibility},");
+                        }
+                        println!("}}")
+                    }
+                    print!("\n");
+        
+                    println!("parsed functions:\n");
+                    for Fun { 
+                        accessibility, 
+                        location: _, 
+                        name, 
+                        mutable, 
+                        recursive, 
+                        left_args, 
+                        right_args, 
+                        return_type, 
+                        body 
+                    } in functions.get().unwrap() {
+                        print!(
+                            "{}{}function {name} with accessibility {accessibility} and left args [", 
+                            if *mutable {"mutable "} else {""}, 
+                            if *recursive {"recursive "} else {""},
+                        );
+                        for FnParam { param_name, param_type, .. } in *left_args {
+                            print!("{} of type {param_type:?}, ", param_name.as_ref().unwrap());
+                        }
+                        print!("] and right args [");
+                        for FnParam { param_type, param_name, .. } in *right_args {
+                            print!("{} of type {param_type:?}, ", param_name.as_ref().unwrap());
+                        }
+                        println!("] and return type {return_type:?} and statements {{");
+                        for stmt in body {
+                            println!("\t{stmt:?},");
+                        }
+                        println!("}}\n");
+                    }
+                    print!("\n");
+                },
+                Err(errors) => for parser_error in errors {
+                    parser_error.write(&mut std::io::stdout(), contents.as_str()).unwrap();
+                }
+            };
+        },
+        MessageSetting::Verbose => {
+            match parser::parse(
+                &expr_bump, &stmt_bump, &fn_param_bump,
+                &accessors, &structs, &functions,
+                &tokens
+            ) {
+                Ok(()) => {
+                    println!("accessors:");
+                    for accessor in accessors.get().unwrap() {
+                        println!("{accessor:#?}");
+                    }
+                    println!("");
+                    
+                    println!("accessors:");
+                    for dbg_struct in structs.get().unwrap() {
+                        println!("{dbg_struct:#?}");
+                    }
+                    println!("");
+
+                    println!("accessors:");
+                    for function in functions.get().unwrap() {
+                        println!("{function:#?}");
+                    }
+                    println!("")
+                },
+                Err(errors) => for parser_error in errors {
+                    parser_error.write(&mut std::io::stdout(), contents.as_str()).unwrap();
                 }
             }
-            BinOp::Multiply => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::IntegerLiteral(num1 * num2)));
-                }
-            }
-            BinOp::IntDivide => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::IntegerLiteral(num1 / num2)));
-                }
-            }
-            BinOp::Modulo => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::IntegerLiteral(num1 % num2)));
-                }
-            }
-            BinOp::Plus => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::IntegerLiteral(num1 + num2)));
-                }
-            }
-            BinOp::Minus => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::IntegerLiteral(num1 - num2)));
-                }
-            }
-            BinOp::LogicAnd => {
-                if let ExprData::Literal(Lit::BooleanLiteral(b1)) = left_expr
-                    && let ExprData::Literal(Lit::BooleanLiteral(b2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(*b1 && *b2)));
-                }
-            }
-            BinOp::LogicOr => {
-                if let ExprData::Literal(Lit::BooleanLiteral(b1)) = left_expr
-                    && let ExprData::Literal(Lit::BooleanLiteral(b2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(*b1 || *b2)));
-                }
-            }
-            BinOp::LogicXor => {
-                if let ExprData::Literal(Lit::BooleanLiteral(b1)) = left_expr
-                    && let ExprData::Literal(Lit::BooleanLiteral(b2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(b1 ^ b2)));
-                }
-            }
-            BinOp::Equals => {
-                return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(left_expr == right_expr)));
-            }
-            BinOp::NotEquals => {
-                return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(left_expr != right_expr)));
-            }
-            BinOp::LessThan => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(num1 < num2)));
-                }
-            }
-            BinOp::LessThanEqualTo => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(num1 <= num2)));
-                }
-            }
-            BinOp::GreaterThan => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(num1 > num2)));
-                }
-            }
-            BinOp::GreaterThanEqualTo => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num1)) = left_expr
-                    && let ExprData::Literal(Lit::IntegerLiteral(num2)) = right_expr
-                {
-                    return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(num1 >= num2)));
-                }
-            }
-            _ => todo!("{:?} not implemented yet", op),
         }
-        return bump.alloc(ExprData::BinaryOp(op.clone(), bump.alloc(left_expr), bump.alloc(right_expr)));
-    } else if let ExprData::UnaryOp(op, value) = expr {
-        let expr = eval(bump, value);
-        match op {
-            UnOp::Plus => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num)) = expr {
-                    return bump.alloc(ExprData::Literal(Lit::IntegerLiteral(*num)));
-                }
-            }
-            UnOp::Minus => {
-                if let ExprData::Literal(Lit::IntegerLiteral(num)) = expr {
-                    return bump.alloc(ExprData::Literal(Lit::IntegerLiteral(-num)));
-                }
-            }
-            UnOp::LogicNot => {
-                if let ExprData::Literal(Lit::BooleanLiteral(b)) = expr {
-                    return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(!b)));
-                }
-            }
-            _ => todo!("{:?} not implemented yet", op),
-        }
-        return bump.alloc(ExprData::UnaryOp(op.clone(), bump.alloc(expr)));
-    } else if let ExprData::Literal(Lit::IntegerLiteral(int)) = expr {
-        return bump.alloc(ExprData::Literal(Lit::IntegerLiteral(*int)));
-    } else if let ExprData::Literal(Lit::BooleanLiteral(b)) = expr {
-        return bump.alloc(ExprData::Literal(Lit::BooleanLiteral(*b)));
-    } else {
-        todo!("{:?}", expr);
     }
+}
+
+fn interpret(filepaths: Vec<&str>, settings: Settings) {
+    let filepath = filepaths.first().unwrap();
+    let contents = fs::read_to_string(filepath).unwrap();
+    let mut lexer = lexer::tokenize::Lexer::new(&filepath, &contents);
+    let tokens = lexer.tokenize();
+
+    let expr_bump = ExprBump::new();
+    let stmt_bump = StmtBump::new();
+    let fn_param_bump = FnParamBump::new();
+
+    let accessors = OnceCell::new();
+    let structs = OnceCell::new();
+    let functions = OnceCell::new();
+
+    let parsed = parser::parse(&expr_bump, &stmt_bump, &fn_param_bump, &accessors, &structs, &functions, &tokens);
+
+    match parsed {
+        Err(errors) => {
+            match settings.message_settings {
+                MessageSetting::Default |
+                MessageSetting::Minimal => {
+                    for parser_error in errors {
+                        parser_error.write(&mut std::io::stdout(), contents.as_str()).unwrap();
+                    }
+                    return;
+                },
+                MessageSetting::Verbose => {
+                    for parser_error in errors {
+                        parser_error.write(&mut std::io::stdout(), contents.as_str()).unwrap();
+                    }
+                    return;
+                }
+            }
+        },
+        Ok(()) => ()
+    };
+
+    let mut interpreter = interpreter::Interpreter::new((accessors.get().unwrap(), structs.get().unwrap(), functions.get().unwrap()));
+    //println!("starting");
+    interpreter.interpret(&expr_bump);
 }

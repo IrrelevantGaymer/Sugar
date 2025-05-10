@@ -1,0 +1,94 @@
+pub struct Coord {
+    pub x: i32,
+    pub y: i32,
+}
+
+pub struct Player {
+    pub position: Coord,
+    pub health: i32
+}
+
+pub fn add_coord $ a: Coord $ infix $ b: Coord = Coord {
+    let x = a.x + b.x;
+    let y = a.y + b.y;
+
+    return Coord { x, y };
+}
+
+pub fn move_player $ player: Player, offset: Coord = Player {
+    let new_pos = player.position add_coord offset;
+    let health = player.health;
+
+    return Player { position: new_pos, health };
+}
+
+pub fn attack_player $ player: Player, damage: i32 = Player {
+    let position = player.position;
+    let mut new_health = player.health - damage;
+
+    print_string "Took ";
+    print_i32 damage;
+    print_string " Damage\n";
+
+    if new_health < 0 {
+        new_health = 0;
+    }
+
+    return Player { position, health: new_health };
+}
+
+pub fn print_player $ player: Player {
+    print_health player;
+    print_position player;
+}
+
+pub fn print_health $ player: Player {
+    print_string "Health: ";
+    print_i32 player.health;
+    print_string "\n";
+}
+
+pub fn print_position $ player: Player {
+    print_string "Position: {x: ";
+    print_i32 player.position.x;
+    print_string ", y: ";
+    print_i32 player.position.y;
+    print_string "}\n";
+}
+
+pub fn main {
+    let oxy mut player = Player { 
+        position: Coord { x: 0, y: 0 }, 
+        health: 20 
+    };
+
+    let x = 
+        3 
+        * 
+        3 
+        + 
+        (true
+        ||
+        false
+        ^
+        false);
+    
+    print_player player;
+    player = attack_player player 5;
+    player = move_player player Coord { x: 1, y: 0 };
+    print_string "moved player right\n";
+
+    print_player player;
+    player = attack_player player 10;
+    player = move_player player Coord { x: 0, y: 1 };
+    print_string "moved player up\n";
+
+    print_player player;
+    player = attack_player player 7;
+    player = move_player player Coord { x: -1, y: 0 };
+    print_string "moved player left\n";
+    
+    print_player player;
+
+    return;
+}

@@ -2,18 +2,21 @@ use std::collections::HashMap;
 
 use once_cell::sync::Lazy;
 
-use crate::lexer::token::{self, TknType};
+use crate::lexer::token::{self, Op, TknType};
 
-use super::expr::{ExprType, ExprTypeCons, ExpressionType};
+use super::{expr::{ExprType, ExprTypeCons, ExpressionType}, ExprBump};
 
 pub type UnOp = UnaryOperator;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum UnaryOperator {
+    PlusFloat,
     Plus,
+    MinusFloat,
     Minus,
     LogicNot,
     BitwiseNegate,
     Borrow,
+    BorrowInteriorMutable,
     BorrowMutable,
 }
 
@@ -23,15 +26,20 @@ impl UnOp {
         use UnaryOperator as UO;
 
         match (self, expr_type.clone_inner()) {
+            (_, ET::Never) => Some(expr_type),
             (UO::LogicNot, ET::Bool) |
-            (UO::Minus, 
-                ET::AmbiguousFloat | ET::F32 | ET::F64 | 
-                ET::AmbiguousNegInteger | ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128
+            (UO::PlusFloat, 
+                ET::AmbiguousFloat | ET::F32 | ET::F64
+            ) |
+            (UO::MinusFloat, 
+                ET::AmbiguousFloat | ET::F32 | ET::F64
             ) |
             (UO::Plus, 
-                ET::AmbiguousFloat | ET::F32 | ET::F64 |
                 ET::AmbiguousNegInteger | ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 |
                 ET::AmbiguousPosInteger | ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128
+            ) |
+            (UO::Minus, 
+                ET::AmbiguousNegInteger | ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128
             ) => Some(expr_type),
             _ => None
         }
@@ -39,45 +47,79 @@ impl UnOp {
 }
 
 pub type BinOp = BinaryOperator;
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinaryOperator {
-    BangRangeEquals, // !..=
-    BangRange,       // !..
-    RangeEquals,     // ..=
-    Range,           // ..
+    /// "!..=""
+    BangRangeEquals, 
+    /// "!.."
+    BangRange,
+    /// ..=
+    RangeEquals, 
+    /// ..
+    Range, 
 
-    Equals,             // ==
-    NotEquals,          // !=
-    LessThanEqualTo,    // <=
-    GreaterThanEqualTo, // >=
-    LessThan,           // <
-    GreaterThan,        // >
+    /// ==
+    Equals, 
+    /// "!="
+    NotEquals, 
+    /// <=
+    LessThanEqualTo, 
+    /// >=
+    GreaterThanEqualTo, 
+    /// <
+    LessThan, 
+    /// >
+    GreaterThan, 
 
-    PlusPlus,          // ++
-    Plus,              // +
-    MinusMinus,        // --
-    Minus,             // -
-    Exponent,          // **
-    Multiply,          // *
-    IntDivide,         // //
-    FloatDivide,       // /
-    Modulo,            // %
-    LogicAnd,          // &&
-    LogicOr,           // ||
-    LogicXor,          // ^^
-    BitwiseAnd,        // &
-    BitwiseOr,         // |
-    BitwiseXor,        // ^
-    BitwiseShiftLeft,  // <<
-    BitwiseShiftRight, // >>
+    /// ++
+    Concat,
+    /// +
+    Plus,
+    /// +.
+    PlusFloat,
+    /// -
+    Minus,
+    /// -.
+    MinusFloat,
+    /// **
+    Exponent,
+    /// **.
+    ExponentFloat,
+    /// *
+    Multiply,
+    /// *.
+    MultiplyFloat,
+    /// /
+    Divide,
+    /// /.
+    DivideFloat,
+    /// %
+    Modulo,
+    /// %.
+    ModuloFloat,
+    /// &&
+    LogicAnd,
+    /// ||
+    LogicOr,
+    /// &
+    BitwiseAnd,
+    /// |
+    BitwiseOr,
+    /// ^
+    BitwiseXor,
+    /// <<
+    BitwiseShiftLeft,
+    /// >>
+    BitwiseShiftRight,
 }
 
 impl BinOp {
-    pub fn transform_type<'etc>(
+    pub fn transform_type<'bumps>(
         self, 
-        left: ExprTypeCons<'etc>, 
-        right: ExprTypeCons<'etc>,
-    ) -> Option<ExprTypeCons<'etc>> {
+        expr_bump: &'bumps ExprBump,
+        left: &mut ExprTypeCons<'bumps>, 
+        right: &mut ExprTypeCons<'bumps>,
+    ) -> Option<ExprTypeCons<'bumps>> {
         use ExprType as ET;
         use BinOp as BO;
 
@@ -85,28 +127,32 @@ impl BinOp {
         let right_expr_type = right.clone_inner();
 
         match (self, left_expr_type, right_expr_type) {
-            (BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo,
+            //Propogating Never Types
+            (_, ET::Never, _) => return Some(ExprTypeCons::new(expr_bump, ET::Never)),
+            (_, _, ET::Never) => return Some(ExprTypeCons::new(expr_bump, ET::Never)),
+            
+            //Unambiguous Integer Operations
+            (
+                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | 
+                    BO::Divide | BO::Modulo | BO::BitwiseAnd | BO::BitwiseOr | 
+                    BO::BitwiseXor,
                 l @ (ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 | 
-                    ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128 | 
-                    ET::F32 | ET::F64
+                    ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128
                 ), 
                 r @ (ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 | 
-                    ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128 | 
-                    ET::F32 | ET::F64
-                ),
-            ) if l == r => return Some(left),
-            (BO::IntDivide | BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
-                l @ (ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 |
-                    ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128
-                ), 
-                r @ (ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 |
                     ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128
                 ),
-            ) if l == r => return Some(left),
-            (BO::FloatDivide,
+            ) if l == r => return Some(left.clone()),
+
+            //Unambiguous Floating Point Operations
+            (
+                BO::PlusFloat | BO::MinusFloat | BO::ExponentFloat | 
+                    BO::MultiplyFloat | BO::DivideFloat,
                 l @ (ET::F32 | ET::F64),
                 r @ (ET::F32 | ET::F64),
-            ) if l == r => return Some(left),
+            ) if l == r => return Some(left.clone()),
+
+            //Unambiguous Integer Comparisons
             (
                 BO::Equals | BO::NotEquals | 
                     BO::LessThanEqualTo | BO::GreaterThanEqualTo | 
@@ -117,53 +163,79 @@ impl BinOp {
                 r @ (ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128 | 
                     ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128 
                 ),
-            ) if l == r => return Some(ExprTypeCons::new_temp(ET::Bool)),
+            ) if l == r => return Some(ExprTypeCons::new(expr_bump, ET::Bool)),
 
+            //Unambiguous Floating Point Comparisons
             (
                 BO::Equals | BO::NotEquals | 
                     BO::LessThanEqualTo | BO::GreaterThanEqualTo | 
                     BO::LessThan | BO::GreaterThan,
                 l @ (ET::F32 | ET::F64), 
                 r @ (ET::F32 | ET::F64),
-            ) if l == r => return Some(ExprTypeCons::new_temp(ET::Bool)),
+            ) if l == r => return Some(ExprTypeCons::new(expr_bump, ET::Bool)),
 
+            //Other Comparisons
             (
-                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | BO::IntDivide | 
-                    BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
+                BO::Equals | BO::NotEquals | 
+                    BO::LessThanEqualTo | BO::GreaterThanEqualTo | 
+                    BO::LessThan | BO::GreaterThan,
+                l @ ET::Char, 
+                r @ ET::Char,
+            ) if l == r => return Some(ExprTypeCons::new(expr_bump, ET::Bool)),
+
+            //Potentially Ambiguous Integer Operations
+            (
+                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | 
+                    BO::Divide | BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
                 ET::AmbiguousPosInteger | ET::AmbiguousNegInteger, 
                 ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128,
             ) |
             (
-                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | BO::IntDivide |
-                    BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
+                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | 
+                    BO::Divide | BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
                 ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128,
                 ET::AmbiguousPosInteger | ET::AmbiguousNegInteger, 
-            ) => {
-                return left.match_type(right)
-            },
-
+            ) |
             (
-                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | BO::IntDivide | 
-                    BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
+                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | 
+                    BO::Divide |  BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
                 ET::AmbiguousPosInteger, 
                 ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128,
             ) |
             (
-                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | BO::IntDivide |
-                    BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
+                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | 
+                    BO::Divide | BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
                 ET::U8 | ET::U16 | ET::U32 | ET::U64 | ET::U128,
                 ET::AmbiguousPosInteger, 
+            ) |
+            (
+                BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | BO::Divide | 
+                    BO::BitwiseAnd | BO::BitwiseOr | BO::BitwiseXor,
+                ET::AmbiguousNegInteger | ET::AmbiguousPosInteger,
+                ET::AmbiguousNegInteger | ET::AmbiguousPosInteger
             ) => return left.match_type(right),
 
-            (BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | BO::FloatDivide,
+            //Potentially Ambiguous Floating Point Operations
+            (
+                BO::PlusFloat | BO::MinusFloat | BO::ExponentFloat | 
+                    BO::MultiplyFloat | BO::DivideFloat,
                 ET::AmbiguousFloat, 
                 ET::F32 | ET::F64,
             ) | 
-            (BO::Plus | BO::Minus | BO::Exponent | BO::Multiply | BO::Modulo | BO::FloatDivide,
+            (
+                BO::PlusFloat | BO::MinusFloat | BO::ExponentFloat | 
+                    BO::MultiplyFloat | BO::DivideFloat,
                 ET::F32 | ET::F64, 
                 ET::AmbiguousFloat, 
-            ) => return left.match_type(right),
+            ) |
+            (
+                BO::PlusFloat | BO::MinusFloat | BO::ExponentFloat | 
+                    BO::MultiplyFloat | BO::DivideFloat,
+                ET::AmbiguousFloat, 
+                ET::AmbiguousFloat, 
+            )=> return left.match_type(right),
 
+            //Potentially Ambiguous Integer Comparisons
             (
                 BO::Equals | BO::NotEquals | 
                     BO::LessThanEqualTo | BO::GreaterThanEqualTo | 
@@ -177,11 +249,7 @@ impl BinOp {
                     BO::LessThan | BO::GreaterThan,
                 ET::I8 | ET::I16 | ET::I32 | ET::I64 | ET::I128,
                 ET::AmbiguousPosInteger | ET::AmbiguousNegInteger, 
-            ) => {
-                left.match_type(right);
-                return Some(ExprTypeCons::new_temp(ET::Bool));
-            },
-
+            ) |
             (
                 BO::Equals | BO::NotEquals | 
                     BO::LessThanEqualTo | BO::GreaterThanEqualTo | 
@@ -197,9 +265,10 @@ impl BinOp {
                 ET::AmbiguousPosInteger, 
             ) => {
                 left.match_type(right);
-                return Some(ExprTypeCons::new_temp(ET::Bool));
+                return Some(ExprTypeCons::new(expr_bump, ET::Bool));
             },
 
+            //Potentially Ambiguous Floating Point Comparisons
             (
                 BO::NotEquals | 
                     BO::LessThanEqualTo | BO::GreaterThanEqualTo | 
@@ -215,89 +284,77 @@ impl BinOp {
                 ET::AmbiguousFloat, 
             ) => {
                 left.match_type(right);
-                return Some(ExprTypeCons::new_temp(ET::Bool));
+                return Some(ExprTypeCons::new(expr_bump, ET::Bool));
             },
 
-            (BO::LogicAnd | BO::LogicOr | BO::LogicXor,
+            //Boolean Operations
+            (BO::LogicAnd | BO::LogicOr | BO::BitwiseXor,
                 ET::Bool, ET::Bool
-            ) => return Some(left),
+            ) => return Some(left.clone()),
 
             _ => return None
         }
-
-        // match (self, &mut *left.get().borrow_mut(), &mut *right.get().borrow_mut()) {
-        //     (Plus | Minus | Exponent | Multiply | Modulo,
-        //         l @ (I8 | I16 | I32 | I64 | I128 | U8 | U16 | U32 | U64 | U128 | F32 | F64), 
-        //         r @ (I8 | I16 | I32 | I64 | I128 | U8 | U16 | U32 | U64 | U128 | F32 | F64)
-        //     ) if l == r => (),
-        //     (Plus | Minus | Exponent | Multiply | Modulo,
-        //         l @ (AmbiguousPosInteger | AmbiguousNegInteger), 
-        //         r @ (I8 | I16 | I32 | I64 | I128)
-        //     ) => {
-        //         left.match_type(right);
-        //     },
-        //     (Plus | Minus | Exponent | Multiply | Modulo,
-        //         l @ (I8 | I16 | I32 | I64 | I128),
-        //         r @ (AmbiguousPosInteger | AmbiguousNegInteger), 
-        //     ) => {
-        //         right.match_type(left);
-        //     },
-        //     // (Plus | Minus | Exponent | Multiply | Modulo,
-        //     //     AmbiguousPosInteger
-        //     // )
-        //     (IntDivide, 
-        //         l @ (I8 | I16 | I32 | I64 | I128), 
-        //         r @ (I8 | I16 | I32 | I64 | I128)
-        //     ) if l == r => (),
-        //     (IntDivide, 
-        //         l @ (AmbiguousPosInteger | AmbiguousNegInteger), 
-        //         r @ (I8 | I16 | I32 | I64 | I128)
-        //     ) => {
-        //         left.match_type(right);
-        //     },
-        //     (IntDivide, 
-        //         l @ (I8 | I16 | I32 | I64 | I128),
-        //         r @ (AmbiguousPosInteger | AmbiguousNegInteger), 
-        //     ) => {
-        //         right.match_type(left);
-        //     },
-        //     (FloatDivide,
-        //         l @ (F32 | F64),
-        //         r @ (F32 | F64)
-        //     ) if l == r => (),
-        //     _ => return None
-        // }
     }
     
     pub fn get_bin_op(operator: &TknType) -> BinOp {
+        let TknType::Operation(operator) = operator else {
+            panic!("Invalid TokenType, expecting applicable Operation");
+        };
         return match operator {
-            TknType::Operation(token::Op::Exponent) => BinOp::Exponent,
-            TknType::Operation(token::Op::Multiply) => BinOp::Multiply,
-            TknType::Operation(token::Op::FloatDivide) => BinOp::FloatDivide,
-            TknType::Operation(token::Op::IntDivide) => BinOp::IntDivide,
-            TknType::Operation(token::Op::Modulo) => BinOp::Modulo,
-            TknType::Operation(token::Op::Plus) => BinOp::Plus,
-            TknType::Operation(token::Op::Minus) => BinOp::Minus,
-            TknType::Operation(token::Op::BitwiseShiftLeft) => BinOp::BitwiseShiftLeft,
-            TknType::Operation(token::Op::BitwiseShiftRight) => BinOp::BitwiseShiftRight,
-            TknType::Operation(token::Op::BitwiseAnd) => BinOp::BitwiseAnd,
-            TknType::Operation(token::Op::BitwiseXor) => BinOp::BitwiseXor,
-            TknType::Operation(token::Op::BitwiseOr) => BinOp::BitwiseOr,
-            TknType::Operation(token::Op::Equals) => BinOp::Equals,
-            TknType::Operation(token::Op::NotEquals) => BinOp::NotEquals,
-            TknType::Operation(token::Op::LessThan) => BinOp::LessThan,
-            TknType::Operation(token::Op::GreaterThan) => BinOp::GreaterThan,
-            TknType::Operation(token::Op::LessThanEqualTo) => BinOp::LessThanEqualTo,
-            TknType::Operation(token::Op::GreaterThanEqualTo) => BinOp::GreaterThanEqualTo,
-            TknType::Operation(token::Op::LogicAnd) => BinOp::LogicAnd,
-            TknType::Operation(token::Op::LogicXor) => BinOp::LogicXor,
-            TknType::Operation(token::Op::LogicOr) => BinOp::LogicOr,
-            TknType::Operation(token::Op::BangRangeEquals) => BinOp::BangRangeEquals,
-            TknType::Operation(token::Op::BangRange) => BinOp::BangRange,
-            TknType::Operation(token::Op::RangeEquals) => BinOp::RangeEquals,
-            TknType::Operation(token::Op::Range) => BinOp::Range,
-            TknType::Operation(token::Op::PlusPlus) => BinOp::PlusPlus,
-            _ => panic!("Invalid TokenType, expecting applicable Operation"),
+            Op::ExponentFloat => BinOp::ExponentFloat,
+            Op::Exponent => BinOp::Exponent,
+            Op::MultiplyFloat => BinOp::MultiplyFloat,
+            Op::Multiply => BinOp::Multiply,
+            Op::DivideFloat => BinOp::DivideFloat,
+            Op::Divide => BinOp::Divide,
+            Op::ModuloFloat => BinOp::ModuloFloat,
+            Op::Modulo => BinOp::Modulo,
+            Op::PlusFloat => BinOp::PlusFloat,
+            Op::Plus => BinOp::Plus,
+            Op::MinusFloat => BinOp::MinusFloat,
+            Op::Minus => BinOp::Minus,
+            Op::BitwiseShiftLeft => BinOp::BitwiseShiftLeft,
+            Op::BitwiseShiftRight => BinOp::BitwiseShiftRight,
+            Op::BitwiseAnd => BinOp::BitwiseAnd,
+            Op::BitwiseXor => BinOp::BitwiseXor,
+            Op::BitwiseOr => BinOp::BitwiseOr,
+            Op::Equals => BinOp::Equals,
+            Op::NotEquals => BinOp::NotEquals,
+            Op::LessThan => BinOp::LessThan,
+            Op::GreaterThan => BinOp::GreaterThan,
+            Op::LessThanEqualTo => BinOp::LessThanEqualTo,
+            Op::GreaterThanEqualTo => BinOp::GreaterThanEqualTo,
+            Op::LogicAnd => BinOp::LogicAnd,
+            Op::LogicOr => BinOp::LogicOr,
+            Op::BangRangeEquals => BinOp::BangRangeEquals,
+            Op::BangRange => BinOp::BangRange,
+            Op::RangeEquals => BinOp::RangeEquals,
+            Op::Range => BinOp::Range,
+            Op::PlusPlus => BinOp::Concat,
+            Op::ConcatEquals            |
+            Op::PlusFloatEquals         |
+            Op::PlusEquals              |
+            Op::MinusFloatEquals        |
+            Op::MinusEquals             |
+            Op::ExponentFloatEquals     |
+            Op::ExponentEquals          |
+            Op::MultiplyFloatEquals     |
+            Op::MultiplyEquals          |
+            Op::DivideFloatEquals       |
+            Op::DivideEquals            |
+            Op::ModuloFloatEquals       |
+            Op::ModuloEquals            |
+            Op::LogicAndEquals          |
+            Op::LogicOrEquals           |
+            Op::BitwiseAndEquals        |
+            Op::BitwiseOrEquals         |
+            Op::BitwiseXorEquals        |
+            Op::BitwiseShiftLeftEquals  |
+            Op::BitwiseShiftRightEquals |
+            Op::LogicNot                |
+            Op::BitwiseNegate           |
+            Op::Arrow                   |
+            Op::Assign => panic!("Not Binary Operation"),
         };
     }
 }
@@ -314,11 +371,11 @@ pub static OPERATOR_INFO_MAP: Lazy<HashMap<TknType, (OpPrec, OpAssoc)>> =
                 (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left),
             ),
             (
-                TknType::Operation(token::Op::FloatDivide),
+                TknType::Operation(token::Op::DivideFloat),
                 (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left),
             ),
             (
-                TknType::Operation(token::Op::IntDivide),
+                TknType::Operation(token::Op::Divide),
                 (OpPrec::MultiplicationDivisionModulo, OpAssoc::Left),
             ),
             (
@@ -380,10 +437,6 @@ pub static OPERATOR_INFO_MAP: Lazy<HashMap<TknType, (OpPrec, OpAssoc)>> =
             (
                 TknType::Operation(token::Op::LogicAnd),
                 (OpPrec::LogicAnd, OpAssoc::Left),
-            ),
-            (
-                TknType::Operation(token::Op::LogicXor),
-                (OpPrec::LogicXor, OpAssoc::Left),
             ),
             (
                 TknType::Operation(token::Op::LogicOr),

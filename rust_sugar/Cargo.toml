@@ -11,5 +11,6 @@ num = "0.4"
 num-derive = "0.3"
 num-traits = "0.2"
 once_cell = "1.18.0"
-let_unless = {path = "../let_unless"}
-stack_frame_allocators = "1.0.0"
+stack_frame_allocators = "1.1.2"
+text_io = "0.1.13"
+unicode_escape = "0.1.0"

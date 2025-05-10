@@ -1,20 +1,23 @@
-pub mut fn Main {
-    i32 x = 2;
-    i32 y = 5;
-    i32 z = x Add y;
-
-    Std::WriteLn z;
-    Std::WriteLn "\"Hello World!\"";
+pub fn a $ in: i32 {
+    return;
 }
 
-//test comments
-/,
- , /,
- ,  , multi line too
- ,  ,/
- ,/
+pub fn b $ in: i32 = i32 {
+    return 4 / 2;
+}
 
-pub fn Add $ i32 i32 : i32;
-pub fn Add $ a infix $ b : i32 {
-    return a + b;
+pub fn c {
+    return 4.0 /. 2.0;
+}
+
+// pub fn a_wrong $ in: i32 asdfasdfasd {
+// 
+// }
+
+pub fn b_wrong $ in: i32 = i32 asdfasdfasdf {
+
+}
+
+pub fn c_wrong asdfasdfadsf {
+
 }
