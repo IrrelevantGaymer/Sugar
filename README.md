@@ -273,16 +273,16 @@ You initialize them like you would normal structs, except the anonymous struct d
 
 ## Comments
 
-For single line comments, Sugar uses typical C-style comments with two forward slashes "//".  However, Multiline comments, instead of being "/*" and "*/", are "/," and ",/" simply because I think they are easier to type.
+For single line comments, Sugar uses typical C-style comments with two forward slashes "//".  However, Multiline comments, instead of being "/\*" and "\*/", are "/," and ",/" simply because I think they are easier to type.
 
-// single line comment
-/,
- , multi line comment line 1
- , line 2
- , line 3
- , /,
- ,  , nested multi line comments are allowed
- ,  ,/
+// single line comment\
+/,\
+ , multi line comment line 1\
+ , line 2\
+ , line 3\
+ , /,\
+ ,  , nested multi line comments are allowed\
+ ,  ,/\
  ,/
 
 ## Built In Functions
@@ -299,27 +299,27 @@ panic will throw an error and abort the program.  Sugar has no intention of feat
 
 ## Roadmap
 
-Completely finish better error messaging
-Add Traits, Impls, and Methods -- note: we do this first so we can define Copy, MoveOnly, Linear and Pin types with the trait system
-Add Generics
-Create built in Garbage Collector and other Allocators and Move semantics (Not everything will be copy!!! yay!!!)
-Add support for Refs and Lifetimes
-Aliasing (actual descriptive names with shorthands so your code isn't an essay)
-Add support for unsafe
-Create built in functions for pointer read/write operations
-Add Inline Assembly
-Multiple Files and Accessors -- at some point during all that mess above
-Directives to set defaults for less annoyance (such as default accessor annotations, lifetime, oxy, etc.)
-Then maybe the compiler teehee
-
-Binding, Currying, and Partial Application
-Into operator
-Linear Types
-Standard Build System like cargo
-Enums
-Bitflags
-Standard Library
-Pattern Matching
-FFI interop
-Bootstrapping
-Standard Library
+Completely finish better error messaging\
+Add Traits, Impls, and Methods -- note: we do this first so we can define Copy, MoveOnly, Linear and Pin types with the trait system\
+Add Generics\
+Create built in Garbage Collector and other Allocators and Move semantics (Not everything will be copy!!! yay!!!)\
+Add support for Refs and Lifetimes\
+Aliasing (actual descriptive names with shorthands so your code isn't an essay)\
+Add support for unsafe\
+Create built in functions for pointer read/write operations\
+Add Inline Assembly\
+Multiple Files and Accessors -- at some point during all that mess above\
+Directives to set defaults for less annoyance (such as default accessor annotations, lifetime, oxy, etc.)\
+Then maybe the compiler teehee\
+\
+Binding, Currying, and Partial Application\
+Into operator\
+Linear Types\
+Standard Build System like cargo\
+Enums\
+Bitflags\
+Standard Library\
+Pattern Matching\
+FFI interop\
+Bootstrapping\
+Standard Library\
